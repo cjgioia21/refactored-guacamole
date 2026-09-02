@@ -3,84 +3,95 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>StudyMatch — Find your study partner</title>
+  <title>StudyMatch — attraction-based matchmaking</title>
   <link rel="stylesheet" href="style.css" />
 </head>
 <body>
   <header>
-    <div class="brand">📚 StudyMatch</div>
-    <nav>
-      <button data-view="join" class="active">Join</button>
-      <button data-view="members">Members</button>
-      <button data-view="pairings">Auto-Pair</button>
-    </nav>
+    <div class="brand">Study<span>Match</span> <em>beta</em></div>
+    <div class="creds"><span id="credits">0</span> ✦</div>
   </header>
 
   <main>
-    <!-- Join / profile form -->
-    <section id="view-join" class="view active">
-      <h1>Find your perfect study partner</h1>
-      <p class="sub">Create a profile and we'll match you with people who study the same things, at the same times, with the same goals.</p>
-      <form id="profile-form">
+    <!-- Landing -->
+    <section id="view-landing" class="view active">
+      <div class="hero">
+        <h1>STUDY OF <b>US</b></h1>
+        <p class="tag">Strangers rate your photo; you rate theirs. Get an honest report on how attractive you are — and match with the people you're attracted to, who are attracted to you back.</p>
+        <div class="hero-actions">
+          <button class="ghost" data-view="matchup">rate others →</button>
+          <button class="primary" data-view="onboard">get rated →</button>
+        </div>
+      </div>
+    </section>
+
+    <!-- Onboarding: photo + demographics + socials + questionnaire -->
+    <section id="view-onboard" class="view">
+      <h2>Create your profile</h2>
+      <p class="sub">Add a photo and answer honestly. Answers stay private — they only power your report and matches.</p>
+      <form id="onboard-form">
         <label>Name <input name="name" required maxlength="80" /></label>
-        <label>Subjects <span class="hint">comma separated</span>
-          <input name="subjects" placeholder="calculus, biology, spanish" />
+        <label>Photo URL <span class="hint">optional — an avatar is used otherwise</span>
+          <input name="photo" placeholder="https://…" />
         </label>
-        <label>Goals <span class="hint">comma separated</span>
-          <input name="goals" placeholder="exam prep, accountability, deep focus" />
-        </label>
-        <label>Languages <span class="hint">comma separated</span>
-          <input name="languages" placeholder="english, spanish" />
-        </label>
-        <div class="row">
-          <label>Level
-            <select name="level">
-              <option>beginner</option>
-              <option>intermediate</option>
-              <option>advanced</option>
-              <option>expert</option>
-            </select>
+        <div class="row3">
+          <label>Age <input name="age" type="number" min="18" max="99" /></label>
+          <label>Gender
+            <select name="gender"><option value="woman">woman</option><option value="man">man</option><option value="nonbinary">nonbinary</option></select>
           </label>
-          <label>Study style
-            <select name="style">
-              <option value="flexible">flexible</option>
-              <option value="silent">silent co-working</option>
-              <option value="discussion">discussion</option>
-              <option value="pomodoro">pomodoro</option>
-              <option value="teaching">teach each other</option>
-            </select>
+          <label>Orientation
+            <select name="orientation"><option value="straight">straight</option><option value="gay">gay</option><option value="lesbian">lesbian</option><option value="bi">bi</option></select>
           </label>
         </div>
         <fieldset>
-          <legend>Availability</legend>
-          <div id="availability" class="grid"></div>
+          <legend>Mental health <span class="hint">optional, private</span></legend>
+          <div id="mh" class="opts"></div>
         </fieldset>
-        <label>Bio <textarea name="bio" maxlength="500" rows="2"></textarea></label>
-        <button type="submit">Create profile &amp; find matches</button>
+        <label>Instagram <span class="hint">shared only when you both opt in</span>
+          <input name="instagram" placeholder="@handle" />
+        </label>
+        <div id="questions"></div>
+        <button type="submit" class="primary">Submit &amp; get my report</button>
       </form>
     </section>
 
-    <!-- Matches for current user -->
-    <section id="view-matches" class="view">
-      <h1>Your matches</h1>
-      <p class="sub" id="matches-for"></p>
-      <div id="matches" class="cards"></div>
+    <!-- Matchup / voting -->
+    <section id="view-matchup" class="view">
+      <h2>Who's more attractive?</h2>
+      <p class="sub">The photos you choose teach us your type. Every 3 votes earns a credit.</p>
+      <div id="matchup" class="matchup"></div>
+      <p class="empty" id="matchup-empty" hidden>Not enough profiles yet — create a couple.</p>
     </section>
 
-    <!-- All members -->
-    <section id="view-members" class="view">
-      <h1>Members</h1>
-      <div id="members" class="cards"></div>
+    <!-- Report -->
+    <section id="view-report" class="view">
+      <h2>Your report</h2>
+      <div id="report"></div>
     </section>
 
-    <!-- Global pairings -->
-    <section id="view-pairings" class="view">
-      <h1>Auto-Pair everyone</h1>
-      <p class="sub">Optimally pairs all members into study buddies.</p>
-      <button id="run-pairings">Run pairing</button>
-      <div id="pairings" class="cards"></div>
+    <!-- Connections -->
+    <section id="view-connections" class="view">
+      <h2>Connections</h2>
+      <p class="sub">Socials unlock only when you've both opted to share.</p>
+      <div id="connections" class="cards"></div>
+    </section>
+
+    <!-- Guessing games -->
+    <section id="view-games" class="view">
+      <h2>Guessing games</h2>
+      <p class="sub">How well can you read people? 2 of 3 correct earns a credit.</p>
+      <div id="game-pick" class="cards"></div>
+      <div id="game-play"></div>
     </section>
   </main>
+
+  <nav class="tabs">
+    <button data-view="matchup">Rate</button>
+    <button data-view="games">Guess</button>
+    <button data-view="report" id="tab-report" disabled>Report</button>
+    <button data-view="connections" id="tab-conn" disabled>Connect</button>
+    <button data-view="onboard">Profile</button>
+  </nav>
 
   <script src="app.js"></script>
 </body>

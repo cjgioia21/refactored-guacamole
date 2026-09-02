@@ -1,47 +1,71 @@
 # StudyMatch
 
-A study-partner matchmaking platform inspired by [studyofus.com](https://studyofus.com).
-Members create a profile (subjects, goals, availability, level, study style) and
-the engine scores compatibility to surface the best study partners — or auto-pairs
-the whole group into buddies.
+An attraction-based matchmaking app inspired by [studyofus.com](https://studyofus.com).
+
+You submit a photo and answer a battery of political / sexual / personality
+questions plus demographics. Strangers then compare your photo against others and
+pick who's more attractive. From those choices StudyMatch builds:
+
+- **How you're perceived** — an Elo attractiveness rating and percentile.
+- **Your type** — learned from *the photos you choose*: gender you're drawn to,
+  older/younger age lean, openness to partners with mental-health conditions, and
+  political/personality traits.
+- **Who's attracted to you** — the trait profile of people who pick you.
+- **Matches** — ranked by **mutual** predicted attraction (you're into them *and*
+  they're into you), orientation-aware.
+
+Instead of messaging, two users can **opt in to share socials** — handles unlock
+only when *both* sides opt in.
 
 ## Run
 
 ```bash
 npm install
-npm start        # http://localhost:3000
-npm test         # matchmaking engine tests
+node src/seed.js   # optional: 12 demo profiles + simulated matchups
+npm start          # http://localhost:3000
+npm test           # engine tests
 ```
 
-## Matchmaking
+## How it works
 
-`src/matchmaking.js` scores two profiles 0–100 across weighted factors:
+`src/engine.js`
 
-| Factor       | Weight | Basis                                   |
-|--------------|:------:|-----------------------------------------|
-| subjects     |   35   | Jaccard overlap of subjects             |
-| availability |   25   | shared day/time-slot cells              |
-| goals        |   15   | Jaccard overlap of goals                |
-| style        |   10   | matching study style                    |
-| level        |   10   | closeness of experience level           |
-| language     |    5   | shared languages                        |
+- **Elo** (`updateElo`, `recordVote`) rates each photo from head-to-head matchups.
+- **Learned type** — every vote folds the chosen winner's demographics into the
+  voter's type: gender counts, age lean (`winnerAge − voterAge`), mental-health
+  openness, and a running trait vector. `typeSummary()` renders it in plain words.
+- **Mutual attraction** — `matchScore(a, b)` is the harmonic mean of both
+  directions of `attractionScore`, which blends an orientation/gender prior
+  (`attractedGenders`), learned gender preference, type-fit (`similarity`), and the
+  target's attractiveness percentile.
+- **Guessing games** — `guessOutcome` scores guesses of a person's trait axis,
+  age bracket, gender, or whether they report a mental-health condition.
 
-- `compatibility(a, b)` — score + per-factor breakdown + shared subjects
-- `findMatches(user, candidates)` — ranked partner list for one user
-- `pairAll(users)` — greedy global pairing maximizing total compatibility
+`src/questions.js` maps ~30 self-report questions onto 10 trait axes.
+Demographics (age, gender, orientation, mental health) are structured fields.
 
 ## API
 
-| Method | Route                          | Purpose                        |
-|--------|--------------------------------|--------------------------------|
-| GET    | `/api/users`                   | list members                   |
-| POST   | `/api/users`                   | create profile                 |
-| GET    | `/api/users/:id`               | get member                     |
-| PUT    | `/api/users/:id`               | update profile                 |
-| DELETE | `/api/users/:id`               | remove member                  |
-| GET    | `/api/users/:id/matches`       | ranked matches for a member    |
-| GET    | `/api/compatibility/:a/:b`     | score between two members      |
-| GET    | `/api/pairings`                | auto-pair all members          |
-| GET    | `/api/meta`                    | days / slots / levels          |
+| Method | Route                              | Purpose                                  |
+|--------|------------------------------------|------------------------------------------|
+| GET    | `/api/questions`                   | questionnaire + axes                     |
+| GET    | `/api/meta`                        | genders, orientations, MH flags, axes    |
+| POST   | `/api/users`                       | create profile (photo, demographics, socials, answers) |
+| GET/PUT/DELETE | `/api/users/:id`           | read / update / delete                   |
+| GET    | `/api/matchup?voter=:id`           | two profiles to compare                  |
+| POST   | `/api/vote`                        | `{voterId, winnerId, loserId}`           |
+| GET    | `/api/users/:id/report`            | attractiveness, your type, matches       |
+| GET    | `/api/users/:id/matches`           | ranked mutual matches                    |
+| GET    | `/api/match/:a/:b`                  | mutual score between two users           |
+| POST   | `/api/users/:id/share`             | `{targetId}` — opt in to share socials   |
+| GET    | `/api/users/:id/connections`       | shares; socials revealed on mutual opt-in|
+| GET/POST | `/api/guess`                     | serve / answer a guessing round          |
+| POST   | `/api/games/reward`                | `{voterId, correct}` — credit if ≥2/3    |
 
-Data persists to `data/users.json` (git-ignored).
+Socials are never returned by `publicView`, matchups, or reports — only through a
+**mutual** connection. Data persists to `data/users.json` (git-ignored).
+
+## Privacy note
+
+Orientation and mental-health fields are optional, self-reported, kept private,
+and used only to power your own report and match suggestions.
