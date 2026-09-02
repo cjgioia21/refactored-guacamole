@@ -22,7 +22,7 @@ const PORT = process.env.PORT || 3000;
 app.use(express.json());
 app.use(express.static(join(__dirname, "public")));
 
-const CREDIT_PER_VOTES = 3;
+const CREDIT_PER_VOTES = 12; // credits are hard to earn: 1 per 12 ratings
 const GUESS_AXES = [...Object.keys(AXES), "age", "gender", "mh"];
 const oauthStates = new Set();
 
@@ -230,7 +230,7 @@ app.post("/api/guess", (req, res) => {
 });
 
 app.post("/api/games/reward", requireProfile, (req, res) => {
-  const earned = Number(req.body?.correct) >= 2;
+  const earned = Number(req.body?.correct) >= 3; // only a perfect 3/3 pays out
   if (earned) store.addCredits(req.profile.id, 1);
   res.json({ earned, credits: req.profile.credits });
 });

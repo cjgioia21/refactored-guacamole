@@ -27,8 +27,8 @@ games; questionnaire answers are never shown to anyone.
 
 ## Credits
 
-Everything data-rich is gated behind credits, and **you earn credits by rating
-other people** (every 3 votes) and by winning guessing rounds (≥2 of 3):
+Credits are deliberately **hard to earn** — you get them by rating other people
+(1 credit per **12** votes) and by acing a guessing round (a perfect **3/3**):
 
 | Spend | Cost | What you get |
 |-------|-----:|--------------|
@@ -100,7 +100,7 @@ Demographics (age, gender, orientation, mental health) are structured fields.
 | GET    | `/api/report`                | attractiveness band, guess reveals, fans, type |
 | GET    | `/api/matches`               | mutual matches (**socials revealed**)         |
 | GET/POST | `/api/guess`               | serve / answer a guessing round               |
-| POST   | `/api/games/reward`          | `{correct}` — credit if ≥2/3                   |
+| POST   | `/api/games/reward`          | `{correct}` — credit only on a perfect 3/3     |
 | GET    | `/api/guess-stats`           | per-game accuracy for the signed-in user      |
 | POST   | `/api/reveal`                | `{game}` — spend 30✦ to reveal a guess         |
 | POST   | `/api/buy-pairs`             | spend 75✦ for +200 prioritized matchups        |
