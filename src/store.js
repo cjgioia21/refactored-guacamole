@@ -70,6 +70,12 @@ export function create(p = {}) {
     admirers: emptyAcc(), // who finds this user attractive
     ratings: {}, // { otherId: { w, l } } revealed preference from matchups
     guessStats: {}, // { axis: { correct, total } } guessing-game accuracy
+    guessesReceived: {}, // { axis: { low, high } } what strangers guessed about you
+    fans: { n: 0, mh: {}, gender: {}, ageSum: 0, ageN: 0 }, // fan demographics
+    revealed: {}, // { gameKey: true } trait reveals you've purchased
+    fansUnlocked: false, // "Who Likes You?" demographic report unlocked
+    emailOnNewData: false,
+    priorityPairs: 0, // extra matchup priority purchased
     createdAt: new Date().toISOString(),
   };
   users.push(user);
@@ -121,6 +127,42 @@ export function recordGuess(id, axis, correct) {
   s.total += 1;
   if (correct) s.correct += 1;
   persist();
+}
+
+// Record what a stranger guessed ABOUT a target's photo (low/high on an axis).
+export function recordGuessAbout(targetId, axis, guessed) {
+  const target = get(targetId);
+  if (!target || (guessed !== "low" && guessed !== "high")) return;
+  target.guessesReceived = target.guessesReceived || {};
+  const g = target.guessesReceived[axis] || (target.guessesReceived[axis] = { low: 0, high: 0 });
+  g[guessed] += 1;
+  persist();
+}
+
+// Spend credits. Returns true on success, false if too few credits.
+export function spend(id, cost) {
+  const user = get(id);
+  if (!user || (user.credits || 0) < cost) return false;
+  user.credits -= cost;
+  persist();
+  return true;
+}
+export function reveal(id, gameKey) {
+  const user = get(id);
+  if (user) { (user.revealed || (user.revealed = {}))[gameKey] = true; persist(); }
+}
+export function unlockFans(id) {
+  const user = get(id);
+  if (user) { user.fansUnlocked = true; persist(); }
+}
+export function addPriorityPairs(id, n) {
+  const user = get(id);
+  if (user) { user.priorityPairs = (user.priorityPairs || 0) + n; persist(); }
+}
+export function setEmailPref(id, on) {
+  const user = get(id);
+  if (user) { user.emailOnNewData = !!on; persist(); }
+  return user;
 }
 export function guessStats(id) {
   const user = get(id);

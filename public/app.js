@@ -129,16 +129,15 @@ async function loadHome() {
 }
 
 // ================= Game grid (with accuracy) =================
-const GAME_LABELS = { age: "Age", gender: "Gender", mh: "Mental health", pol: "Politics", dom: "Dom or sub", adv: "Adventurousness", rel: "Religiosity", amb: "Ambition" };
-const GAME_AXES = ["age", "gender", "mh", "pol", "dom", "adv"];
 async function renderGameGrid() {
   const stats = (await api("/api/guess-stats")).body || {};
-  $("#game-grid").innerHTML = GAME_AXES.map((a) => {
-    const acc = stats[a]?.accuracy;
-    return `<div class="game-cell" data-axis="${a}"><div class="g-cat">GUESS</div><h4>${esc(GAME_LABELS[a] || a)}</h4>
+  const games = META.games || [];
+  $("#game-grid").innerHTML = games.map((g) => {
+    const acc = stats[g.axis]?.accuracy;
+    return `<div class="game-cell" data-axis="${g.axis}" data-label="${esc(g.label)}"><div class="g-cat">GUESS</div><h4>${g.emoji || ""} ${esc(g.label)}</h4>
       <span class="acc">${acc == null ? "—" : acc + "%"}</span> <span class="meta">accurate · play →</span></div>`;
   }).join("");
-  $("#game-grid").querySelectorAll("[data-axis]").forEach((el) => el.addEventListener("click", () => playGame(el.dataset.axis)));
+  $("#game-grid").querySelectorAll("[data-axis]").forEach((el) => el.addEventListener("click", () => playGame(el.dataset.axis, el.dataset.label)));
 }
 
 // ================= Matchup =================
@@ -158,23 +157,96 @@ async function loadMatchup() {
   }));
 }
 
-// ================= Report =================
+// ================= Report ("How people see your photo") =================
 async function loadReport() {
   const r = (await api("/api/report")).body;
   if (!r) return ($("#report").innerHTML = `<p class="empty">Not available.</p>`);
+  setCredits(r.credits);
+  const p = me.profile || {};
+  const a = r.attractiveness;
   const traits = (arr) => arr.map((t) => `<span class="pill">${esc(t.label)}</span>`).join("") || `<span class="meta">not enough data yet</span>`;
-  $("#report").innerHTML = `
-    <div class="card"><div class="stat"><b>${r.attractivenessPercentile}%</b><span class="meta">more attractive than others · Elo ${r.elo} · ${r.matchups} matchups</span></div></div>
-    <div class="section-title">Your type <span class="hint">— learned from the photos you chose</span></div>
+
+  // Attractiveness
+  const attract = `<div class="card attract"><div class="section-title" style="margin-top:0">✨ Attractiveness</div>
+    <div class="report-head">
+      <div class="ph">${avatar(p)}</div>
+      <div>
+        <div>chosen more than <b class="range">${a.low}–${a.high}%</b> of photos</div>
+        <div class="meta">ranked among ${a.established.toLocaleString()} established photos · Elo ${r.elo}</div>
+        <div class="progress"><i style="width:${Math.round((a.pairs / a.pairsTarget) * 100)}%"></i></div>
+        <div class="meta">${a.pairs} / ${a.pairsTarget} pairs · ${Math.max(0, a.pairsTarget - a.pairs)} still coming in</div>
+        <button class="buy-btn" id="buy-pairs">+${META.pairsAmount} pairs · ${r.cost.pairs}✦</button>
+      </div>
+    </div></div>`;
+
+  // What strangers guess about your photo
+  const guessRows = r.games.map((g) => {
+    let right;
+    if (g.revealed && g.result) right = `<span class="reveal-val">${esc(g.result.pole)} · ${g.result.pct}%</span>`;
+    else if (g.ready) right = `<button class="reveal-btn" data-reveal="${g.key}">reveal · ${r.cost.reveal}✦</button>`;
+    else right = `<button class="reveal-btn collecting" data-play-axis="${gameAxis(g.key)}" data-label="${esc(g.label)}">still collecting · play →</button>`;
+    return `<div class="guess-row"><span class="g-name">${g.emoji || ""} ${esc(g.label)}</span>${right}</div>`;
+  }).join("");
+  const guesses = `<div class="card"><div class="section-title" style="margin-top:0">🔮 What strangers guess about your photo</div>
+    ${guessRows}<p class="meta" style="margin:12px 0 0">From direct guesses in the games. The more you <b>play &amp; rate</b>, the more your photo is shown to others.</p></div>`;
+
+  // Who Likes You?
+  const fans = r.fans.unlocked ? fansCard(r.fans.report) : lockedFansCard(r.fans, r.credits);
+
+  // Your type + matches
+  const extra = `<div class="section-title">Your type <span class="hint">— learned from the photos you chose</span></div>
     <div class="card"><p style="margin:0;font-size:17px">${esc(r.yourType.text)}</p></div>
-    <div class="section-title">The type of person attracted to you</div>
-    <div class="card">${traits(r.likedBy)}</div>
-    <div class="section-title">Where you stand</div>
     <div class="cards">
       <div class="card"><div class="stat"><b>${r.matches.length}</b><span class="meta">mutual matches</span></div><button class="outline" style="width:100%;margin-top:8px" id="go-matches">open matches →</button></div>
-      <div class="card"><div class="stat"><b>${r.crushes}</b><span class="meta">you rated highly, no match back yet</span></div></div>
-    </div>`;
+      <div class="card"><div class="stat"><b>${r.crushes}</b><span class="meta">you rated highly, no match back</span></div></div>
+    </div>
+    <label class="email-pref" style="margin-top:14px"><input type="checkbox" id="email-pref" ${r.emailOnNewData ? "checked" : ""}/> email me when new data is available</label>`;
+
+  $("#report").innerHTML = attract + guesses + fans + extra;
+
   $("#go-matches")?.addEventListener("click", () => show("matches"));
+  $("#buy-pairs")?.addEventListener("click", () => spendAction("/api/buy-pairs", {}));
+  $("#report").querySelectorAll("[data-reveal]").forEach((b) => b.addEventListener("click", () => spendAction("/api/reveal", { game: b.dataset.reveal })));
+  $("#report").querySelectorAll("[data-play-axis]").forEach((b) => b.addEventListener("click", () => playGame(b.dataset.playAxis, b.dataset.label)));
+  $("#unlock-fans")?.addEventListener("click", () => spendAction("/api/unlock-fans", {}));
+  $("#email-pref")?.addEventListener("change", (e) => post("/api/email-pref", { on: e.target.checked }));
+}
+const gameAxis = (key) => (META.games.find((g) => g.key === key) || {}).axis;
+
+function lockedFansCard(f, credits) {
+  const pct = Math.min(100, Math.round((credits / f.cost) * 100));
+  return `<div class="card locked-card">
+    <div class="section-title" style="color:#fff;margin-top:0">💘 Who Likes You?</div>
+    <p>A full demographic report on the people who pick your photo. We compare everyone who picks you against everyone who passes:</p>
+    <ul>
+      <li>their politics, religion, and beliefs</li>
+      <li>mental health — which diagnoses are overrepresented among your fans</li>
+      <li>their gender, age, and personality lean</li>
+      <li>how their type compares to the average voter</li>
+    </ul>
+    <button class="unlock-btn" id="unlock-fans">🔒 unlock your full demographic report · ${f.cost}✦</button>
+    <div class="progress" style="background:rgba(255,255,255,.25)"><i style="width:${pct}%;background:#fff"></i></div>
+    <div class="earn-line">${credits}✦ of ${f.cost}✦ earned — <b>rate photos</b> or <b>play rounds</b> to unlock it. Updates live as votes arrive.</div>
+  </div>`;
+}
+function fansCard(rep) {
+  const mh = rep.mentalHealth.length
+    ? rep.mentalHealth.map((m) => `<span class="pill">${esc(m.flag)} · ${m.lift}× (${m.pct}%)</span>`).join("")
+    : `<span class="meta">no diagnosis stands out yet</span>`;
+  const traits = rep.traits.map((t) => `<span class="pill">${esc(t.label)}</span>`).join("") || `<span class="meta">not enough data</span>`;
+  const g = Object.entries(rep.genderSplit || {}).map(([k, v]) => `${k} ${v}`).join(" · ") || "—";
+  return `<div class="card"><div class="section-title" style="margin-top:0">💘 Who Likes You? <span class="hint">— ${rep.fans} fans</span></div>
+    <p class="meta" style="margin:0 0 4px">Overrepresented among your fans</p><div>${mh}</div>
+    <p class="meta" style="margin:12px 0 4px">Their politics / beliefs / personality</p><div>${traits}</div>
+    <p class="meta" style="margin:12px 0 0">Fans by gender: ${esc(g)}${rep.avgAge ? " · avg age " + rep.avgAge : ""}</p></div>`;
+}
+
+// Spend credits then refresh the report.
+async function spendAction(url, body) {
+  const { status, body: res } = await post(url, body);
+  if (status === 402) { alert("Not enough credits — rate more photos or play games to earn them."); return; }
+  if (res?.credits != null) { setCredits(res.credits); me.profile.credits = res.credits; }
+  loadReport();
 }
 
 // ================= Matches (socials only) =================
@@ -193,21 +265,23 @@ function socialLinks(s) {
 }
 
 // ================= Guessing game play =================
-async function playGame(axis) {
+async function playGame(axis, label) {
   show("games");
-  $("#game-title").textContent = `Guess: ${GAME_LABELS[axis] || axis}`;
+  const game = (META.games || []).find((g) => g.axis === axis);
+  $("#game-title").textContent = `Guess: ${label || game?.label || axis}`;
   let round = 0, correct = 0;
   const prompts = {
     age: ["Older or younger than 30?", [["under 30", "under 30"], ["30+", "30+"]]],
     gender: ["What's their gender?", [["woman", "woman"], ["man", "man"], ["nonbinary", "nonbinary"]]],
     mh: ["Do they report a mental-health condition?", [["yes", "yes"], ["no", "no"]]],
   };
+  if (game) prompts[axis] = [`${game.emoji} ${game.label}?`, [[game.poles[0], "low"], [game.poles[1], "high"]]];
   const finish = async () => {
     const { body: rew } = await post("/api/games/reward", { correct });
     if (rew?.credits != null) { setCredits(rew.credits); me.profile.credits = rew.credits; }
     $("#game-play").innerHTML = `<div class="card" style="text-align:center"><h3>${correct}/3 correct${rew?.earned ? " — +1 credit ✦" : ""}</h3>
       <button class="primary" id="again">play again</button> <button class="outline" data-view="home">home</button></div>`;
-    $("#again").addEventListener("click", () => playGame(axis));
+    $("#again").addEventListener("click", () => playGame(axis, label));
     $("#game-play").querySelector("[data-view=home]").addEventListener("click", () => { renderGameGrid(); show("home"); });
   };
   const next = async () => {

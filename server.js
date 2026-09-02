@@ -6,7 +6,14 @@ import { randomBytes } from "node:crypto";
 import * as store from "./src/store.js";
 import * as auth from "./src/auth.js";
 import { QUESTIONS, AXES } from "./src/questions.js";
-import { recordVote, report, guessOutcome, matchScore, mutualMatches, likes } from "./src/engine.js";
+import {
+  recordVote, report, guessOutcome, matchScore, mutualMatches, likes,
+  GAMES, gameByKey, attractivenessBand, guessConsensus, fansReport,
+} from "./src/engine.js";
+
+// Credit economy
+const COST = { reveal: 30, pairs: 75, fans: 300 };
+const PAIRS_AMOUNT = 200;
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const app = express();
@@ -89,7 +96,7 @@ app.get("/api/me", (req, res) => {
 // ---------- Questionnaire / meta ----------
 app.get("/api/questions", (_req, res) => res.json({ questions: QUESTIONS, axes: AXES }));
 app.get("/api/meta", (_req, res) =>
-  res.json({ axes: AXES, guessAxes: GUESS_AXES, creditPerVotes: CREDIT_PER_VOTES })
+  res.json({ axes: AXES, guessAxes: GUESS_AXES, games: GAMES, cost: COST, pairsAmount: PAIRS_AMOUNT, creditPerVotes: CREDIT_PER_VOTES })
 );
 
 // ---------- Profile (owned by the session account) ----------
@@ -120,7 +127,8 @@ app.get("/api/matchup", (req, res) => {
   let pool = store.all().filter((u) => (!me || u.id !== me.id) && u.photo !== undefined);
   if (gender) pool = pool.filter((u) => u.gender === gender);
   if (pool.length < 2) return res.status(409).json({ error: "not enough profiles" });
-  const [a, b] = pickTwo(pool);
+  const a = weightedPick(pool);
+  const b = weightedPick(pool, a.id);
   res.json({ a: store.publicView(a), b: store.publicView(b) });
 });
 
@@ -142,7 +150,42 @@ app.post("/api/vote", requireProfile, (req, res) => {
 });
 
 // ---------- Report & matches ----------
-app.get("/api/report", requireProfile, (req, res) => res.json(report(req.profile, store.all())));
+// "How people see this photo": attractiveness band, per-game guess reveals,
+// and the gated "Who Likes You?" demographic report.
+app.get("/api/report", requireProfile, (req, res) => {
+  const me = req.profile;
+  const pop = store.all();
+  const base = report(me, pop);
+  const band = attractivenessBand(me, pop);
+
+  const games = GAMES.map((g) => {
+    const consensus = guessConsensus(me, g);
+    const revealed = !!me.revealed?.[g.key];
+    return {
+      key: g.key, label: g.label, emoji: g.emoji,
+      ready: consensus.ready,
+      revealed,
+      // Only expose the consensus once the user has paid to reveal it.
+      result: revealed && consensus.ready ? { pole: consensus.pole, pct: consensus.pct, total: consensus.total } : null,
+      total: consensus.total,
+    };
+  });
+
+  res.json({
+    ...base,
+    credits: me.credits || 0,
+    cost: COST,
+    attractiveness: band,
+    games,
+    emailOnNewData: !!me.emailOnNewData,
+    fans: {
+      unlocked: !!me.fansUnlocked,
+      cost: COST.fans,
+      earnedTowardUnlock: me.credits || 0,
+      report: me.fansUnlocked ? fansReport(me, pop) : null,
+    },
+  });
+});
 
 // Mutual matches: you both rated each other over other people -> socials revealed.
 app.get("/api/matches", requireProfile, (req, res) => {
@@ -181,6 +224,8 @@ app.post("/api/guess", (req, res) => {
   const outcome = guessOutcome(target, axis, guess);
   const me = myProfile(req);
   if (me) store.recordGuess(me.id, axis, outcome.correct);
+  // Aggregate what strangers guess about the target (trait axes only).
+  if (AXES[axis] && (guess === "low" || guess === "high")) store.recordGuessAbout(targetId, axis, guess);
   res.json(outcome);
 });
 
@@ -192,15 +237,51 @@ app.post("/api/games/reward", requireProfile, (req, res) => {
 
 app.get("/api/guess-stats", requireProfile, (req, res) => res.json(store.guessStats(req.profile.id)));
 
-function pickTwo(pool) {
-  const i = Math.floor(Math.random() * pool.length);
-  let j = Math.floor(Math.random() * pool.length);
-  while (j === i) j = Math.floor(Math.random() * pool.length);
-  return [pool[i], pool[j]];
+// ---------- Credit spending ----------
+// Reveal what strangers guess about your photo on one game (costs credits).
+app.post("/api/reveal", requireProfile, (req, res) => {
+  const game = gameByKey(req.body?.game);
+  if (!game) return res.status(400).json({ error: "unknown game" });
+  if (req.profile.revealed?.[game.key]) return res.json({ ok: true, alreadyOwned: true, credits: req.profile.credits });
+  if (!guessConsensus(req.profile, game).ready) return res.status(409).json({ error: "still collecting" });
+  if (!store.spend(req.profile.id, COST.reveal)) return res.status(402).json({ error: "not enough credits", credits: req.profile.credits });
+  store.reveal(req.profile.id, game.key);
+  const c = guessConsensus(req.profile, game);
+  res.json({ ok: true, credits: req.profile.credits, result: { pole: c.pole, pct: c.pct, total: c.total } });
+});
+
+// Unlock the full "Who Likes You?" demographic report.
+app.post("/api/unlock-fans", requireProfile, (req, res) => {
+  if (req.profile.fansUnlocked) return res.json({ ok: true, alreadyOwned: true, credits: req.profile.credits });
+  if (!store.spend(req.profile.id, COST.fans)) return res.status(402).json({ error: "not enough credits", credits: req.profile.credits });
+  store.unlockFans(req.profile.id);
+  res.json({ ok: true, credits: req.profile.credits, report: fansReport(req.profile, store.all()) });
+});
+
+// Buy more matchup pairs (more data, faster) — boosts how often your photo shows.
+app.post("/api/buy-pairs", requireProfile, (req, res) => {
+  if (!store.spend(req.profile.id, COST.pairs)) return res.status(402).json({ error: "not enough credits", credits: req.profile.credits });
+  store.addPriorityPairs(req.profile.id, PAIRS_AMOUNT);
+  res.json({ ok: true, credits: req.profile.credits, priorityPairs: req.profile.priorityPairs });
+});
+
+app.post("/api/email-pref", requireProfile, (req, res) => {
+  store.setEmailPref(req.profile.id, req.body?.on);
+  res.json({ ok: true, emailOnNewData: req.profile.emailOnNewData });
+});
+
+// Weighted pick: profiles with unspent purchased priority appear more often.
+function weightedPick(pool, exclude) {
+  const cands = pool.filter((u) => u.id !== exclude);
+  const weight = (u) => 1 + ((u.priorityPairs || 0) > 0 && (u.matchups || 0) < (400 + u.priorityPairs) ? 9 : 0);
+  const total = cands.reduce((s, u) => s + weight(u), 0);
+  let r = Math.random() * total;
+  for (const u of cands) { r -= weight(u); if (r <= 0) return u; }
+  return cands[0];
 }
 
 if (process.env.NODE_ENV !== "test") {
-  app.listen(PORT, () => console.log(`StudyMatch running on http://localhost:${PORT}`));
+  app.listen(PORT, () => console.log(`TrueHumanNature running on http://localhost:${PORT}`));
 }
 
 export default app;

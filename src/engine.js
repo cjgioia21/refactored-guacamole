@@ -53,6 +53,7 @@ export function recordVote(voter, winner, loser) {
   accumulate(voter.type, winner.traits); // trait fit
   // Winner is found attractive by this voter -> learn who admires them.
   accumulate(winner.admirers, voter.traits);
+  aggregateFan(winner, voter); // demographic breakdown of "who likes you"
 
   // Revealed preference: record that the voter rated `winner` over `loser`.
   bumpRating(voter, winner.id, "w");
@@ -60,6 +61,15 @@ export function recordVote(voter, winner, loser) {
 
   voter.votesCast = (voter.votesCast || 0) + 1;
   return { winner, loser };
+}
+
+// Fold a fan's demographics into the winner's fan aggregate.
+function aggregateFan(winner, voter) {
+  const f = winner.fans || (winner.fans = { n: 0, mh: {}, gender: {}, ageSum: 0, ageN: 0 });
+  f.n += 1;
+  for (const flag of voter.mentalHealth || []) if (flag !== "none") f.mh[flag] = (f.mh[flag] || 0) + 1;
+  if (voter.gender) f.gender[voter.gender] = (f.gender[voter.gender] || 0) + 1;
+  if (voter.age) { f.ageSum += voter.age; f.ageN += 1; }
 }
 
 function bumpRating(voter, id, kind) {
@@ -245,6 +255,77 @@ export function guessOutcome(target, axis, guess) {
   const [low, high] = AXES[axis];
   const truth = value >= 0 ? "high" : "low";
   return { correct: guess === truth, actual: truth, actualLabel: value >= 0 ? high : low, strength: Math.abs(value) };
+}
+
+// ---------- Guessing "games" catalogue (what strangers guess about a photo) ----------
+// Each game guesses one trait axis; poles are flavored display labels.
+export const GAMES = [
+  { key: "bodycount", label: "Bodycount", emoji: "🍑", axis: "adv", poles: ["low bodycount", "high bodycount"] },
+  { key: "networth", label: "Net worth", emoji: "💰", axis: "amb", poles: ["lower income", "higher income"] },
+  { key: "politics", label: "Politics", emoji: "🗳️", axis: "pol", poles: ["left", "right"] },
+  { key: "dominance", label: "Dominance", emoji: "⛓️", axis: "dom", poles: ["submissive", "dominant"] },
+  { key: "gooner", label: "Gooner Nature", emoji: "💦", axis: "risk", poles: ["tame", "gooner"] },
+];
+export const gameByKey = (k) => GAMES.find((g) => g.key === k) || null;
+
+// ---------- Credit economy: attractiveness band, guess consensus, fan report ----------
+export const ESTABLISHED_MIN = 8; // matchups before a photo is "established"
+export const PAIRS_TARGET = 400; // matchup appearances that "complete" the data
+export const REVEAL_MIN = 5; // guesses received before a trait can be revealed
+
+// Attractiveness as a confidence band that narrows with more matchups.
+export function attractivenessBand(user, population) {
+  const p = percentile(user, population);
+  const m = user.matchups || 0;
+  const margin = Math.max(2, Math.min(45, Math.round(45 / Math.sqrt(m + 1))));
+  const established = population.filter((u) => (u.matchups || 0) >= ESTABLISHED_MIN).length;
+  return {
+    percentile: p,
+    low: Math.max(0, p - margin),
+    high: Math.min(100, p + margin),
+    established,
+    pairs: Math.min(m, PAIRS_TARGET + (user.priorityPairs || 0)),
+    pairsTarget: PAIRS_TARGET + (user.priorityPairs || 0),
+  };
+}
+
+// What strangers collectively guessed about this photo on one game/axis.
+export function guessConsensus(user, game) {
+  const counts = user.guessesReceived?.[game.axis] || {};
+  const total = (counts.low || 0) + (counts.high || 0);
+  if (total < REVEAL_MIN) return { ready: false, total };
+  const highShare = (counts.high || 0) / total;
+  const pole = highShare >= 0.5 ? game.poles[1] : game.poles[0];
+  return { ready: true, total, pole, pct: Math.round(Math.max(highShare, 1 - highShare) * 100) };
+}
+
+// Demographic breakdown of the people who pick this photo ("Who Likes You?").
+export function fansReport(user, population) {
+  const f = user.fans || { n: 0, mh: {}, gender: {}, ageSum: 0, ageN: 0 };
+  // Baseline mental-health prevalence across the population.
+  const base = {};
+  let baseN = 0;
+  for (const u of population) {
+    baseN += 1;
+    for (const flag of u.mentalHealth || []) if (flag !== "none") base[flag] = (base[flag] || 0) + 1;
+  }
+  const overrep = Object.entries(f.mh)
+    .map(([flag, c]) => {
+      const fanRate = c / (f.n || 1);
+      const popRate = (base[flag] || 0) / (baseN || 1);
+      return { flag, fanRate, lift: popRate ? fanRate / popRate : fanRate > 0 ? 3 : 0 };
+    })
+    .filter((x) => x.fanRate > 0)
+    .sort((a, b) => b.lift - a.lift)
+    .slice(0, 4)
+    .map((x) => ({ flag: x.flag, pct: Math.round(x.fanRate * 100), lift: Math.round(x.lift * 10) / 10 }));
+  return {
+    fans: f.n,
+    traits: describe(user.admirers.vector, 5), // politics/religion/personality lean
+    mentalHealth: overrep,
+    genderSplit: f.gender,
+    avgAge: f.ageN ? Math.round(f.ageSum / f.ageN) : null,
+  };
 }
 
 function pluralGender(g) {

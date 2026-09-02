@@ -4,14 +4,16 @@ import { profileFromAnswers, QUESTIONS, AXES } from "../src/questions.js";
 import { similarity, emptyAcc } from "../src/vectors.js";
 import {
   updateElo, recordVote, percentile, matchScore, findMatches, guessOutcome,
-  report, typeSummary, attractedGenders, likes, mutualMatches, pickRate, BASE_ELO,
+  report, typeSummary, attractedGenders, likes, mutualMatches, pickRate,
+  attractivenessBand, guessConsensus, fansReport, GAMES, BASE_ELO, REVEAL_MIN,
 } from "../src/engine.js";
 
 function mkUser(id, answers, extra = {}) {
   return {
     id, name: id, traits: profileFromAnswers(answers), elo: BASE_ELO,
     matchups: 0, votesCast: 0, credits: 0, type: emptyAcc(), admirers: emptyAcc(),
-    age: 28, gender: "woman", orientation: "straight", mentalHealth: [], ...extra,
+    age: 28, gender: "woman", orientation: "straight", mentalHealth: [],
+    guessesReceived: {}, fans: { n: 0, mh: {}, gender: {}, ageSum: 0, ageN: 0 }, ...extra,
   };
 }
 const pick = (q, target) =>
@@ -125,6 +127,41 @@ test("mutualMatches requires both to rate each other over others", () => {
   assert.equal(m.length, 1);
   assert.equal(m[0].user.id, "b");
   assert.ok(m[0].youPickRate > 0 && m[0].theyPickRate > 0);
+});
+
+test("attractivenessBand narrows with more matchups", () => {
+  const pop = [mkUser("a"), mkUser("b"), mkUser("c")].map((u, i) => ({ ...u, elo: 1000 + i * 200, matchups: 5 }));
+  const few = { ...pop[1], matchups: 1 };
+  const many = { ...pop[1], matchups: 400 };
+  const bandFew = attractivenessBand(few, pop);
+  const bandMany = attractivenessBand(many, pop);
+  assert.ok(bandFew.high - bandFew.low > bandMany.high - bandMany.low);
+  assert.ok(bandFew.low >= 0 && bandFew.high <= 100);
+});
+
+test("recordVote aggregates fan demographics; fansReport surfaces overrepresentation", () => {
+  const star = mkUser("star", answersAll(0.5), { gender: "man" });
+  const fanA = mkUser("f1", answersAll(0.5), { mentalHealth: ["anxiety"] });
+  const fanB = mkUser("f2", answersAll(0.5), { mentalHealth: ["anxiety"] });
+  const plain = mkUser("p", answersAll(-0.5), { mentalHealth: [] });
+  recordVote(fanA, star, plain);
+  recordVote(fanB, star, plain);
+  const rep = fansReport(star, [star, fanA, fanB, plain]);
+  assert.equal(rep.fans, 2);
+  assert.equal(rep.mentalHealth[0].flag, "anxiety");
+  assert.ok(rep.mentalHealth[0].pct === 100);
+});
+
+test("guessConsensus needs a minimum before it is ready", () => {
+  const g = GAMES.find((x) => x.key === "politics");
+  const u = mkUser("u", answersAll(0));
+  u.guessesReceived[g.axis] = { low: 1, high: 1 };
+  assert.equal(guessConsensus(u, g).ready, false);
+  u.guessesReceived[g.axis] = { low: 1, high: REVEAL_MIN + 4 };
+  const c = guessConsensus(u, g);
+  assert.equal(c.ready, true);
+  assert.equal(c.pole, g.poles[1]); // majority "high"
+  assert.ok(c.pct >= 50);
 });
 
 test("report exposes percentile, yourType, mutual matches and crushes", () => {

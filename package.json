@@ -1,7 +1,7 @@
 {
-  "name": "studymatch",
+  "name": "truehumannature",
   "version": "1.0.0",
-  "description": "Study-partner matchmaking platform inspired by studyofus.com",
+  "description": "Attraction-based matchmaking and perception reports, inspired by studyofus.com",
   "type": "module",
   "main": "server.js",
   "scripts": {

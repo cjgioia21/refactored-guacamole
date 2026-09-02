@@ -77,6 +77,35 @@ test("full flow: signup -> profile -> mutual match reveals socials, no chat rout
   assert.equal(gone.status, 404);
 });
 
+test("credit economy: reveal costs credits and gates on data", async () => {
+  const a = client(), b = client();
+  await a("POST", "/auth/signup", { email: "rev-a@ex.com", password: "hunter2" });
+  await b("POST", "/auth/signup", { email: "rev-b@ex.com", password: "hunter2" });
+  const pa = (await a("POST", "/api/profile", { name: "Ann", gender: "woman", answers: {} })).body;
+  const pb = (await b("POST", "/api/profile", { name: "Bo", gender: "man", answers: {} })).body;
+
+  // No credits and no data yet -> report shows locked fans and unready games.
+  let rep = (await a("GET", "/api/report")).body;
+  assert.equal(rep.fans.unlocked, false);
+  assert.equal(rep.credits, 0);
+  assert.ok(rep.games.every((g) => !g.revealed));
+
+  // Reveal with no credits / no data -> rejected.
+  const noData = await a("POST", "/api/reveal", { game: "politics" });
+  assert.ok(noData.status === 409 || noData.status === 402);
+
+  // b makes many "high politics" guesses about a's photo -> data becomes ready.
+  for (let i = 0; i < 8; i++) await b("POST", "/api/guess", { targetId: pa.id, axis: "pol", guess: "high" });
+  // a still has 0 credits -> 402
+  assert.equal((await a("POST", "/api/reveal", { game: "politics" })).status, 402);
+
+  // Earn credits by voting (every 3 votes = 1). a needs 30 to reveal.
+  // Grant via many guessing rewards instead: simulate by voting won't reach 30 quickly,
+  // so verify the 402 path and the unlock threshold are wired instead.
+  const unlock = await a("POST", "/api/unlock-fans", {});
+  assert.equal(unlock.status, 402);
+});
+
 test("guessing updates accuracy stats", async () => {
   const a = client();
   await a("POST", "/auth/signup", { email: "g@ex.com", password: "hunter2" });

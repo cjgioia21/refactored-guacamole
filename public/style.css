@@ -124,6 +124,28 @@ button:disabled { opacity: .45; cursor: default; }
 .result.no { color: var(--red); }
 .progress { text-align: center; color: var(--muted); margin-bottom: 10px; }
 
+/* ---------- report economy ---------- */
+.attract b.range { font-size: 30px; color: var(--accent); }
+.report-head { display: flex; gap: 16px; align-items: flex-start; }
+.report-head .ph { flex: 0 0 120px; }
+.report-head .ph img, .report-head .ph .avatar { width: 120px; aspect-ratio: 3/4; border-radius: 12px; object-fit: cover; }
+.progress { height: 12px; background: #e7ebf7; border-radius: 999px; overflow: hidden; margin: 10px 0 6px; }
+.progress > i { display: block; height: 100%; background: var(--accent); }
+.buy-btn { background: var(--accent); color: #fff; border: 0; border-radius: 12px; padding: 12px 16px; font-weight: bold; width: 100%; margin-top: 10px; }
+.guess-row { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 14px 0; border-bottom: 1px solid var(--line); }
+.guess-row:last-child { border-bottom: 0; }
+.guess-row .g-name { display: flex; align-items: center; gap: 8px; color: #444a63; font-size: 18px; }
+.reveal-btn { background: var(--accent); color: #fff; border: 0; border-radius: 999px; padding: 9px 16px; font-weight: bold; white-space: nowrap; }
+.reveal-btn.collecting { background: transparent; color: var(--accent); text-decoration: underline; padding: 9px 0; }
+.reveal-val { color: var(--navy); font-weight: bold; }
+.locked-card { background: linear-gradient(160deg, #7d8bd6, #6f7ecf); color: #fff; border: 0; }
+.locked-card h2, .locked-card p, .locked-card li { color: #fff; }
+.locked-card ul { padding-left: 18px; line-height: 1.6; opacity: .95; }
+.unlock-btn { width: 100%; background: rgba(255,255,255,.16); border: 1px solid rgba(255,255,255,.5); color: #fff; border-radius: 14px; padding: 16px; font-size: 17px; font-weight: bold; margin: 8px 0; }
+.earn-line { font-size: 14px; opacity: .95; }
+.email-pref { display: flex; align-items: center; gap: 10px; color: var(--muted); }
+.email-pref input { width: 18px; height: 18px; }
+.privacy-note { color: var(--muted); font-size: 13px; text-align: center; margin: 18px 6px 0; line-height: 1.5; }
 nav.tabs { position: fixed; bottom: 0; left: 0; right: 0; display: flex; background: var(--card); border-top: 1px solid var(--line); max-width: 720px; margin: 0 auto; }
 nav.tabs button { flex: 1; border: 0; border-radius: 0; background: transparent; color: var(--muted); padding: 14px 0; font-size: 14px; }
 nav.tabs button.active { color: var(--accent); font-weight: bold; }

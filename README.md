@@ -1,31 +1,52 @@
-# StudyMatch
+# TrueHumanNature
 
-An attraction-based matchmaking app inspired by [studyofus.com](https://studyofus.com).
+An attraction-based matchmaking and self-perception app inspired by
+[studyofus.com](https://studyofus.com) — *self discovery, through the eyes of
+others, with lots of data.*
 
 You create an account, submit a photo, and answer a battery of political / sexual /
 personality questions plus demographics. Strangers then compare your photo against
-others and pick who's more attractive. From those choices StudyMatch builds:
+others and pick who's more attractive. From those choices TrueHumanNature builds:
 
-- **How you're perceived** — an Elo attractiveness rating and percentile.
+- **How people see your photo** — an Elo attractiveness rating shown as a
+  confidence **band** ("chosen more than 89–95% of photos") that narrows as more
+  matchups come in, with a live pairs-collected progress bar.
+- **What strangers guess about your photo** — per-game consensus (Bodycount, Net
+  worth, Politics, Dominance, Gooner Nature), each **revealed for credits**.
+- **Who Likes You?** — a full demographic report on the people who pick your photo
+  (politics/beliefs, overrepresented mental-health diagnoses among your fans,
+  gender/age/personality lean), **unlocked for credits**.
 - **Your type** — learned from *the photos you choose*: gender you're drawn to,
-  older/younger age lean, openness to partners with mental-health conditions, and
-  political/personality traits.
-- **Who's attracted to you** — the trait profile of people who pick you.
+  older/younger age lean, mental-health openness, and political/personality traits.
 - **Matches** — a match happens when **you both rate each other's photo over other
-  people's** (mutual revealed preference, like a double opt-in). On a match, you
-  each see the other's **socials** (Instagram, etc.) so you can reach out.
+  people's** (mutual revealed preference). On a match, you each see the other's
+  **socials** (Instagram, etc.) so you can reach out.
 
-Socials stay private until you match — they're never shown in matchups, reports,
-or public profiles, only to a confirmed mutual match.
+Socials stay private until you match. Photos are shown only inside the rating
+games; questionnaire answers are never shown to anyone.
+
+## Credits
+
+Everything data-rich is gated behind credits, and **you earn credits by rating
+other people** (every 3 votes) and by winning guessing rounds (≥2 of 3):
+
+| Spend | Cost | What you get |
+|-------|-----:|--------------|
+| Reveal a trait guess | 30✦ | what strangers guessed about you on that game |
+| Buy more pairs | 75✦ | +200 prioritized matchup appearances (more data, faster) |
+| Unlock "Who Likes You?" | 300✦ | the full demographic report on your fans |
 
 ## Run
 
 ```bash
 npm install
-npm run seed       # optional: 12 demo profiles + simulated matchups to rate
+npm run seed       # demo profiles + matchups + a demo login (see below)
 npm start          # http://localhost:3000
 npm test           # engine + auth + server tests
 ```
+
+`npm run seed` also creates a ready-to-explore login: **demo@truehumannature.com /
+hunter2** (already rated, with credits and revealable data).
 
 ## Accounts
 
@@ -53,9 +74,12 @@ server derives who you are from the session cookie, never from the client.
   *and* they both like. That mutual match reveals socials.
 - **Suggestions** — `matchScore` (predicted mutual attraction: orientation/gender
   prior, learned preference, type-fit, attractiveness) powers "go rate these next".
-- **Guessing games** — `guessOutcome` scores guesses of a person's trait axis, age
-  bracket, gender, or whether they report a mental-health condition; per-game
-  accuracy is tracked (`store.recordGuess` / `store.guessStats`).
+- **Guessing games** — `guessOutcome` scores guesses; per-game accuracy is tracked
+  (`store.guessStats`), and each guess is also aggregated onto the *target* photo
+  (`store.recordGuessAbout`) to power its "what strangers guess" reveals.
+- **Report economy** — `attractivenessBand` (confidence band + pairs progress),
+  `guessConsensus` (per-game reveal), and `fansReport` (demographics of your fans,
+  incl. mental-health overrepresentation vs. the population baseline).
 
 `src/questions.js` maps ~30 self-report questions onto 10 trait axes.
 Demographics (age, gender, orientation, mental health) are structured fields.
@@ -73,11 +97,15 @@ Demographics (age, gender, orientation, mental health) are structured fields.
 | POST   | `/api/profile`               | create/update the session account's profile   |
 | GET    | `/api/matchup?gender=`       | two profiles to compare (optionally filtered) |
 | POST   | `/api/vote`                  | `{winnerId, loserId}` — actor = session       |
-| GET    | `/api/report`                | attractiveness, your type, matches, crushes   |
+| GET    | `/api/report`                | attractiveness band, guess reveals, fans, type |
 | GET    | `/api/matches`               | mutual matches (**socials revealed**)         |
 | GET/POST | `/api/guess`               | serve / answer a guessing round               |
 | POST   | `/api/games/reward`          | `{correct}` — credit if ≥2/3                   |
 | GET    | `/api/guess-stats`           | per-game accuracy for the signed-in user      |
+| POST   | `/api/reveal`                | `{game}` — spend 30✦ to reveal a guess         |
+| POST   | `/api/buy-pairs`             | spend 75✦ for +200 prioritized matchups        |
+| POST   | `/api/unlock-fans`           | spend 300✦ to unlock the demographic report    |
+| POST   | `/api/email-pref`            | `{on}` — email me when new data arrives        |
 
 Actions that mutate a user require a session; unauthenticated calls get 401.
 Profiles persist to `data/users.json`, accounts to `data/accounts.json`, and the
