@@ -106,6 +106,24 @@ test("credit economy: reveal costs credits and gates on data", async () => {
   assert.equal(unlock.status, 402);
 });
 
+test("profile stores photo, prediction, ratingsFrom and gender identity", async () => {
+  const a = client();
+  await a("POST", "/auth/signup", { email: "photo@ex.com", password: "hunter2" });
+  await a("POST", "/api/profile", {
+    name: "Pia", gender: "woman", genderIdentity: "woman-trans", ratingsFrom: "men",
+    prediction: 73, photo: "data:image/jpeg;base64,AAAA", answers: {},
+  });
+  const rep = (await a("GET", "/api/report")).body;
+  assert.equal(rep.prediction, 73);
+  const me = (await a("GET", "/api/me")).body;
+  assert.equal(me.profile.photo, "data:image/jpeg;base64,AAAA");
+  // editing without a photo keeps it and merges answers
+  await a("POST", "/api/profile", { name: "Pia B", answers: { pol1: 0 } });
+  const me2 = (await a("GET", "/api/me")).body;
+  assert.equal(me2.profile.photo, "data:image/jpeg;base64,AAAA");
+  assert.equal(me2.profile.name, "Pia B");
+});
+
 test("buying a credit pack grants credits", async () => {
   const a = client();
   await a("POST", "/auth/signup", { email: "buy@ex.com", password: "hunter2" });

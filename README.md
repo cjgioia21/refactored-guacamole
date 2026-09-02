@@ -66,6 +66,15 @@ hunter2** (already rated, with credits and revealable data).
 Voting, reports, matches, and guessing are tied to the signed-in account — the
 server derives who you are from the session cookie, never from the client.
 
+## Adding your photo
+
+The onboarding "Add your photo" flow mirrors the site: photo requirements, a real
+photo upload (the file is downscaled to a small JPEG data URL in the browser, so
+no external storage is needed), a **prediction slider** (how attractive you think
+you'll be rated — later shown against the real percentile in your report), a
+"ratings from" choice, an expanded gender question (cis/trans, AFAB/AMAB), and
+four confirmation checkboxes that gate the **submit my face** button.
+
 ## How it works
 
 `src/engine.js`

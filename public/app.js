@@ -3,6 +3,8 @@ let META = { guessAxes: [] };
 const selectedMH = new Set();
 
 const $ = (s) => document.querySelector(s);
+const $$ = (s) => [...document.querySelectorAll(s)];
+let photoData = null; // uploaded photo as a downscaled data: URL
 const api = (url, opts) => fetch(url, opts).then(async (r) => ({ status: r.status, body: r.status === 204 ? null : await r.json().catch(() => null) }));
 const post = (url, body) => api(url, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
 
@@ -60,9 +62,51 @@ $("#signout").addEventListener("click", async () => {
 (async function start() {
   const cfg = await api("/auth/config");
   if (cfg.body?.google) $("#google-wrap").hidden = false;
+  initPhotoFlow();
   await buildForms();
   await boot();
 })();
+
+// ---- Add-your-photo flow wiring ----
+function downscaleImage(file, max = 420) {
+  return new Promise((resolve, reject) => {
+    const img = new Image();
+    const url = URL.createObjectURL(file);
+    img.onload = () => {
+      const scale = Math.min(1, max / Math.max(img.width, img.height));
+      const w = Math.round(img.width * scale), h = Math.round(img.height * scale);
+      const c = document.createElement("canvas");
+      c.width = w; c.height = h;
+      c.getContext("2d").drawImage(img, 0, 0, w, h);
+      URL.revokeObjectURL(url);
+      resolve(c.toDataURL("image/jpeg", 0.72));
+    };
+    img.onerror = reject;
+    img.src = url;
+  });
+}
+function initPhotoFlow() {
+  $("#choose-photo").addEventListener("click", () => $("#photo-file").click());
+  $("#photo-file").addEventListener("change", async (e) => {
+    const f = e.target.files[0];
+    if (!f) return;
+    try {
+      photoData = await downscaleImage(f);
+      $("#photo-preview").hidden = false;
+      $("#photo-preview").innerHTML = `<img src="${photoData}" alt="preview" />`;
+      $("#choose-photo").textContent = "change photo";
+    } catch { alert("Couldn't read that image — try another."); }
+  });
+  $("#photo-url-toggle").addEventListener("click", () => { $("#photo-url").hidden = !$("#photo-url").hidden; });
+  $("#prediction").addEventListener("input", (e) => {
+    const r = $("#pred-readout");
+    r.textContent = `you predict ${e.target.value}%`;
+    r.classList.add("set");
+  });
+  const confirms = $$("#confirms [data-confirm]");
+  const gate = () => { $("#submit-face").disabled = !confirms.every((c) => c.checked); };
+  confirms.forEach((c) => c.addEventListener("change", gate));
+}
 
 async function boot() {
   const { status, body } = await api("/api/me");
@@ -150,10 +194,20 @@ $("#onboard-form").addEventListener("submit", async (e) => {
   const f = e.target;
   const answers = {};
   $("#questions").querySelectorAll(".q").forEach((q) => { if (q.dataset.answer != null) answers[q.dataset.qid] = Number(q.dataset.answer); });
-  const { body } = await post("/api/profile", {
-    name: f.name.value, photo: f.photo.value, age: f.age.value, gender: f.gender.value,
-    orientation: f.orientation.value, mentalHealth: [...selectedMH], socials: { instagram: f.instagram.value }, answers,
-  });
+  const [gender, genderIdentity] = (f.gender.value || "woman|woman-cis").split("|");
+  const ratingsFrom = document.querySelector('input[name=ratingsFrom]:checked')?.value || "everyone";
+  const predMoved = $("#pred-readout").classList.contains("set");
+  const payload = {
+    name: f.name.value,
+    age: f.age.value, gender, genderIdentity, orientation: f.orientation.value, ratingsFrom,
+    prediction: predMoved ? f.prediction.value : null,
+    mentalHealth: [...selectedMH], socials: { instagram: f.instagram.value },
+  };
+  const photo = photoData || f.photo.value;
+  if (photo) payload.photo = photo; // keep existing photo when editing without a new one
+  if (Object.keys(answers).length) payload.answers = answers;
+  const { status, body } = await post("/api/profile", payload);
+  if (status >= 400) { alert(body?.error || "Couldn't submit — check your photo size."); return; }
   me.profile = body;
   setCredits(body.credits);
   show("home");
@@ -248,6 +302,7 @@ async function loadReport() {
       <div>
         <div>chosen more than <b class="range">${a.low}–${a.high}%</b> of photos</div>
         <div class="meta">ranked among ${a.established.toLocaleString()} established photos · Elo ${r.elo}</div>
+        ${r.prediction != null ? `<div class="meta" style="margin-top:4px">you predicted <b>${r.prediction}%</b> · strangers rate you <b>${a.percentile}%</b></div>` : ""}
         <div class="progress"><i style="width:${Math.round((a.pairs / a.pairsTarget) * 100)}%"></i></div>
         <div class="meta">${a.pairs} / ${a.pairsTarget} pairs · ${Math.max(0, a.pairsTarget - a.pairs)} still coming in</div>
         <button class="buy-btn" id="buy-pairs">+${META.pairsAmount} pairs · ${r.cost.pairs}✦</button>

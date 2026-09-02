@@ -122,6 +122,23 @@ button:disabled { opacity: .45; cursor: default; }
 .opts.fine .opt.sel { background: var(--accent); }
 .fine-label { color: var(--muted); font-size: 13px; margin-bottom: 2px; }
 
+/* ---------- add-your-photo flow ---------- */
+.reqs { margin: 0; padding-left: 20px; line-height: 1.6; color: #444a63; }
+.reqs li { margin-bottom: 6px; }
+.reqs b { color: var(--ink); }
+.choose-photo { width: 100%; background: #f3f5fb; border: 1px solid var(--line); border-radius: 12px; padding: 16px; font-size: 16px; color: var(--ink); cursor: pointer; }
+#photo-preview { margin-top: 12px; text-align: center; }
+#photo-preview img { max-width: 200px; aspect-ratio: 3/4; object-fit: cover; border-radius: 12px; }
+.link { color: var(--accent); text-decoration: underline; cursor: pointer; }
+input[type=range] { width: 100%; accent-color: var(--accent); height: 26px; }
+.pred-readout { text-align: center; color: var(--red); font-size: 14px; margin-top: 4px; }
+.pred-readout.set { color: var(--accent); font-weight: 700; }
+.radios { display: flex; flex-direction: column; gap: 12px; }
+.radios label, .checks label { display: flex; gap: 10px; align-items: flex-start; font-weight: 500; font-size: 15px; line-height: 1.4; cursor: pointer; }
+.radios input, .checks input { width: 20px; height: 20px; flex: 0 0 20px; margin-top: 1px; accent-color: var(--accent); }
+.checks { display: flex; flex-direction: column; gap: 14px; }
+#submit-face { width: 100%; font-size: 17px; padding: 16px; }
+
 /* ---------- matchup ---------- */
 .matchup { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
 .vs-card { background: var(--card); border: 1px solid var(--line); border-radius: 16px; overflow: hidden; text-align: center; }

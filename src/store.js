@@ -36,8 +36,10 @@ export function byAccount(accountId) {
   return users.find((u) => u.accountId === accountId) || null;
 }
 
+const PHOTO_MAX = 300000; // allow small uploaded data: URLs (downscaled client-side)
 const cleanFlags = (v) =>
   (Array.isArray(v) ? v : []).map((x) => String(x).toLowerCase().trim()).filter(Boolean);
+const predict = (v) => (v == null || v === "" ? null : Math.max(0, Math.min(100, Number(v))));
 
 function normSocials(s) {
   if (!s || typeof s !== "object") return {};
@@ -54,10 +56,13 @@ export function create(p = {}) {
     id: randomUUID(),
     accountId: p.accountId || null, // owning login account
     name: String(p.name || "Anonymous").slice(0, 80),
-    photo: String(p.photo || "").slice(0, 500),
+    photo: String(p.photo || "").slice(0, PHOTO_MAX), // URL or uploaded data: URL
     age: Number(p.age) || null,
-    gender: p.gender || null, // man | woman | nonbinary
+    gender: p.gender || null, // man | woman | nonbinary (base, for matching)
+    genderIdentity: p.genderIdentity || null, // e.g. woman-trans, nb-afab
     orientation: p.orientation || "straight", // straight | gay | lesbian | bi
+    ratingsFrom: p.ratingsFrom || null, // who you want ratings from: women | men
+    prediction: predict(p.prediction), // self-predicted attractiveness 0..100
     mentalHealth: cleanFlags(p.mentalHealth), // [] or e.g. ["anxiety"]
     socials: normSocials(p.socials), // PRIVATE — revealed only to a mutual match
     answers: p.answers || {},
@@ -87,15 +92,18 @@ export function update(id, p = {}) {
   const user = get(id);
   if (!user) return null;
   if (p.name != null) user.name = String(p.name).slice(0, 80);
-  if (p.photo != null) user.photo = String(p.photo).slice(0, 500);
+  if (p.photo != null) user.photo = String(p.photo).slice(0, PHOTO_MAX);
   if (p.age != null) user.age = Number(p.age) || null;
   if (p.gender != null) user.gender = p.gender;
+  if (p.genderIdentity != null) user.genderIdentity = p.genderIdentity;
   if (p.orientation != null) user.orientation = p.orientation;
+  if (p.ratingsFrom != null) user.ratingsFrom = p.ratingsFrom;
+  if (p.prediction != null) user.prediction = predict(p.prediction);
   if (p.mentalHealth != null) user.mentalHealth = cleanFlags(p.mentalHealth);
   if (p.socials != null) user.socials = normSocials(p.socials);
   if (p.answers != null) {
-    user.answers = p.answers;
-    user.traits = profileFromAnswers(p.answers);
+    user.answers = { ...(user.answers || {}), ...p.answers }; // merge, don't clobber
+    user.traits = profileFromAnswers(user.answers);
   }
   persist();
   return user;

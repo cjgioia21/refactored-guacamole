@@ -25,7 +25,7 @@ const __dirname = dirname(fileURLToPath(import.meta.url));
 const app = express();
 const PORT = process.env.PORT || 3000;
 
-app.use(express.json());
+app.use(express.json({ limit: "1mb" })); // room for small uploaded data: URLs
 app.use(express.static(join(__dirname, "public")));
 
 const CREDIT_PER_VOTES = 12; // credits are hard to earn: 1 per 12 ratings
@@ -182,6 +182,7 @@ app.get("/api/report", requireProfile, (req, res) => {
     ...base,
     credits: me.credits || 0,
     cost: COST,
+    prediction: me.prediction ?? null,
     attractiveness: band,
     games,
     emailOnNewData: !!me.emailOnNewData,

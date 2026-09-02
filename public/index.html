@@ -38,22 +38,87 @@
     </header>
 
     <main>
-      <!-- Onboarding -->
+      <!-- Onboarding: Add your photo -->
       <section id="view-onboard" class="view">
-        <h2>Set up your profile</h2>
-        <p class="sub">Add a photo and answer honestly. Answers stay private — they power your report and matches.</p>
+        <h2>Add your photo 🖼️</h2>
+        <p class="sub">Put your own face into the game — and find out how people read it.</p>
         <form id="onboard-form">
-          <label>Display name <input name="name" required maxlength="80" /></label>
-          <label>Photo URL <span class="hint">optional — an avatar is used otherwise</span><input name="photo" placeholder="https://…" /></label>
-          <div class="row3">
-            <label>Age <input name="age" type="number" min="18" max="99" /></label>
-            <label>Gender<select name="gender"><option value="woman">woman</option><option value="man">man</option><option value="nonbinary">nonbinary</option></select></label>
-            <label>Orientation<select name="orientation"><option value="straight">straight</option><option value="gay">gay</option><option value="lesbian">lesbian</option><option value="bi">bi</option></select></label>
+          <div class="card">
+            <h3>Submit a photo and get a detailed report of how you're seen</h3>
+            <p class="sub" style="margin:0">Real people rate your photo. Your report shows how you're read at a glance: how attractive strangers find you, and what they guess about you.</p>
           </div>
-          <fieldset><legend>Mental health <span class="hint">optional, private</span></legend><div id="mh" class="opts"></div></fieldset>
-          <label>Instagram <span class="hint">shared only with a mutual match</span><input name="instagram" placeholder="@handle" /></label>
+
+          <div class="card">
+            <h3>Photo requirements</h3>
+            <ul class="reqs">
+              <li><b>Upright and framed like a portrait</b> — head-and-shoulders, face clear, not sideways.</li>
+              <li><b>Face straight-on and clearly visible</b> — well lit, no sunglasses or heavy filters.</li>
+              <li><b>Just you</b> — anyone else must be cropped or blurred out.</li>
+              <li><b>Actually you</b> — a real, recent photo of yourself. Not a celebrity or AI-generated.</li>
+              <li><b>Everyone 18+, nothing sexual</b> — swimwear is fine; nudity is not.</li>
+            </ul>
+          </div>
+
+          <div class="card">
+            <h3>Your photo</h3>
+            <input type="file" id="photo-file" accept="image/*" hidden />
+            <button type="button" class="choose-photo" id="choose-photo">choose a photo…</button>
+            <div id="photo-preview" hidden></div>
+            <div class="hint" style="margin-top:8px">or <a id="photo-url-toggle" class="link">paste an image URL</a></div>
+            <input name="photo" id="photo-url" placeholder="https://…" hidden style="margin-top:8px" />
+          </div>
+
+          <div class="card">
+            <h3>Your prediction</h3>
+            <p class="sub" style="margin:0 0 10px">How attractive do you think people will rate this photo?</p>
+            <input type="range" name="prediction" id="prediction" min="0" max="100" value="50" />
+            <div class="pred-readout" id="pred-readout">move the slider to set your prediction</div>
+          </div>
+
+          <div class="card">
+            <h3>Ratings from</h3>
+            <p class="sub" style="margin:0 0 10px">Who are you most interested in getting ratings from?</p>
+            <div class="radios" id="ratings-from">
+              <label><input type="radio" name="ratingsFrom" value="women" /> women</label>
+              <label><input type="radio" name="ratingsFrom" value="men" /> men</label>
+              <label><input type="radio" name="ratingsFrom" value="everyone" checked /> everyone</label>
+            </div>
+          </div>
+
+          <div class="card">
+            <h3>About you <span class="hint">— private, powers your report</span></h3>
+            <label>Display name <input name="name" required maxlength="80" /></label>
+            <label style="margin-top:12px">Gender
+              <select name="gender">
+                <option value="woman|woman-cis">Woman (cis)</option>
+                <option value="woman|woman-trans">Woman (trans)</option>
+                <option value="man|man-cis">Man (cis)</option>
+                <option value="man|man-trans">Man (trans)</option>
+                <option value="nonbinary|nb-afab">Nonbinary / other (AFAB)</option>
+                <option value="nonbinary|nb-amab">Nonbinary / other (AMAB)</option>
+              </select>
+            </label>
+            <div class="row3" style="margin-top:12px">
+              <label>Age <input name="age" type="number" min="18" max="99" /></label>
+              <label>Orientation<select name="orientation"><option value="straight">straight</option><option value="gay">gay</option><option value="lesbian">lesbian</option><option value="bi">bi</option></select></label>
+              <label>Instagram <input name="instagram" placeholder="@handle" /></label>
+            </div>
+            <fieldset style="margin-top:12px"><legend>Mental health <span class="hint">optional, private</span></legend><div id="mh" class="opts"></div></fieldset>
+          </div>
+
           <div id="questions"></div>
-          <button type="submit" class="primary">Save &amp; continue</button>
+
+          <div class="card">
+            <h3>Confirmations</h3>
+            <div class="checks" id="confirms">
+              <label><input type="checkbox" data-confirm /> I understand other people will see this image and may see how it's ranked.</label>
+              <label><input type="checkbox" data-confirm /> I understand people will rate my photo, including guessing traits about me (personality, bodycount, and more). They can't see my specific answers, only aggregate stats.</label>
+              <label><input type="checkbox" data-confirm /> This is my own face.</label>
+              <label><input type="checkbox" data-confirm /> I am 18 or older.</label>
+            </div>
+          </div>
+
+          <button type="submit" class="primary" id="submit-face" disabled>submit my face</button>
         </form>
       </section>
 
