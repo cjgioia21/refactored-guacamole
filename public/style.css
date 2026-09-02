@@ -12,18 +12,29 @@
   --hero: #9db8ea;
 }
 * { box-sizing: border-box; }
+/* Self-hosted Plus Jakarta Sans — no external dependency, always loads. */
+@font-face {
+  font-family: "Jakarta"; font-style: normal; font-weight: 400; font-display: swap;
+  src: url("/fonts/plus-jakarta-sans-latin-400-normal.woff2") format("woff2");
+}
+@font-face {
+  font-family: "Jakarta"; font-style: normal; font-weight: 600; font-display: swap;
+  src: url("/fonts/plus-jakarta-sans-latin-600-normal.woff2") format("woff2");
+}
+@font-face {
+  font-family: "Jakarta"; font-style: normal; font-weight: 700; font-display: swap;
+  src: url("/fonts/plus-jakarta-sans-latin-700-normal.woff2") format("woff2");
+}
 body {
   margin: 0;
-  font-family: "Inter", system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  font-family: "Jakarta", system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
   background: var(--bg);
   color: var(--ink);
   min-height: 100vh;
   -webkit-font-smoothing: antialiased;
+  letter-spacing: -0.01em;
 }
-h1, h2, h3, h4, .brand, .hero-title {
-  font-family: "Space Grotesk", "Inter", system-ui, sans-serif;
-  font-weight: 700;
-}
+h1, h2, h3, h4, .brand, .hero-title { font-weight: 700; letter-spacing: -0.02em; }
 .topbar { background: var(--red); display: flex; justify-content: center; padding: 8px; }
 .url-pill { background: rgba(0,0,0,.18); color: #fff; border-radius: 999px; padding: 4px 18px; font-size: 14px; }
 .banner { background: var(--red); color: #fff; text-align: center; padding: 10px 16px 14px; font-size: 15px; line-height: 1.4; }
