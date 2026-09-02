@@ -1,0 +1,87 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>StudyMatch — Find your study partner</title>
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+  <header>
+    <div class="brand">📚 StudyMatch</div>
+    <nav>
+      <button data-view="join" class="active">Join</button>
+      <button data-view="members">Members</button>
+      <button data-view="pairings">Auto-Pair</button>
+    </nav>
+  </header>
+
+  <main>
+    <!-- Join / profile form -->
+    <section id="view-join" class="view active">
+      <h1>Find your perfect study partner</h1>
+      <p class="sub">Create a profile and we'll match you with people who study the same things, at the same times, with the same goals.</p>
+      <form id="profile-form">
+        <label>Name <input name="name" required maxlength="80" /></label>
+        <label>Subjects <span class="hint">comma separated</span>
+          <input name="subjects" placeholder="calculus, biology, spanish" />
+        </label>
+        <label>Goals <span class="hint">comma separated</span>
+          <input name="goals" placeholder="exam prep, accountability, deep focus" />
+        </label>
+        <label>Languages <span class="hint">comma separated</span>
+          <input name="languages" placeholder="english, spanish" />
+        </label>
+        <div class="row">
+          <label>Level
+            <select name="level">
+              <option>beginner</option>
+              <option>intermediate</option>
+              <option>advanced</option>
+              <option>expert</option>
+            </select>
+          </label>
+          <label>Study style
+            <select name="style">
+              <option value="flexible">flexible</option>
+              <option value="silent">silent co-working</option>
+              <option value="discussion">discussion</option>
+              <option value="pomodoro">pomodoro</option>
+              <option value="teaching">teach each other</option>
+            </select>
+          </label>
+        </div>
+        <fieldset>
+          <legend>Availability</legend>
+          <div id="availability" class="grid"></div>
+        </fieldset>
+        <label>Bio <textarea name="bio" maxlength="500" rows="2"></textarea></label>
+        <button type="submit">Create profile &amp; find matches</button>
+      </form>
+    </section>
+
+    <!-- Matches for current user -->
+    <section id="view-matches" class="view">
+      <h1>Your matches</h1>
+      <p class="sub" id="matches-for"></p>
+      <div id="matches" class="cards"></div>
+    </section>
+
+    <!-- All members -->
+    <section id="view-members" class="view">
+      <h1>Members</h1>
+      <div id="members" class="cards"></div>
+    </section>
+
+    <!-- Global pairings -->
+    <section id="view-pairings" class="view">
+      <h1>Auto-Pair everyone</h1>
+      <p class="sub">Optimally pairs all members into study buddies.</p>
+      <button id="run-pairings">Run pairing</button>
+      <div id="pairings" class="cards"></div>
+    </section>
+  </main>
+
+  <script src="app.js"></script>
+</body>
+</html>
