@@ -259,12 +259,19 @@ export function guessOutcome(target, axis, guess) {
 
 // ---------- Guessing "games" catalogue (what strangers guess about a photo) ----------
 // Each game guesses one trait axis; poles are flavored display labels.
+// Each game maps to a trait axis, with a `title` for its page, a `selfQ` (the
+// "first, the same question about you" question id), and display `poles`.
 export const GAMES = [
-  { key: "bodycount", label: "Bodycount", emoji: "🍑", axis: "bodycount", poles: ["low bodycount", "high bodycount"] },
-  { key: "networth", label: "Net worth", emoji: "💰", axis: "networth", poles: ["lower income", "higher income"] },
-  { key: "politics", label: "Politics", emoji: "🗳️", axis: "pol", poles: ["left", "right"] },
-  { key: "dominance", label: "Dominance", emoji: "⛓️", axis: "dom", poles: ["submissive", "dominant"] },
-  { key: "gooner", label: "Gooner Nature", emoji: "💦", axis: "gooner", poles: ["tame", "gooner"] },
+  { key: "bodycount", label: "Bodycount", emoji: "🍑", axis: "bodycount", selfQ: "bc1",
+    title: "Guess who has a higher bodycount", poles: ["lower bodycount", "higher bodycount"] },
+  { key: "networth", label: "Net worth", emoji: "💰", axis: "networth", selfQ: "nw0",
+    title: "Guess who has more net worth", poles: ["less net worth", "more net worth"] },
+  { key: "politics", label: "Politics", emoji: "🗳️", axis: "pol", selfQ: "pol11",
+    title: "Guess who is more politically left-leaning", poles: ["more left", "more right"] },
+  { key: "dominance", label: "Dominance", emoji: "⛓️", axis: "dom", selfQ: "dom2",
+    title: "Guess who is more dominant (in the bedroom)", poles: ["more submissive", "more dominant"] },
+  { key: "gooner", label: "Gooner Nature", emoji: "💦", axis: "gooner", selfQ: "gn1",
+    title: "Guess who is more of a gooner", poles: ["more tame", "more of a gooner"] },
 ];
 export const gameByKey = (k) => GAMES.find((g) => g.key === k) || null;
 

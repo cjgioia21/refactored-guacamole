@@ -102,7 +102,8 @@ app.get("/api/me", (req, res) => {
 // ---------- Questionnaire / meta ----------
 app.get("/api/questions", (_req, res) => res.json({ questions: QUESTIONS, axes: AXES }));
 app.get("/api/meta", (_req, res) =>
-  res.json({ axes: AXES, guessAxes: GUESS_AXES, games: GAMES, cost: COST, pairsAmount: PAIRS_AMOUNT, creditPerVotes: CREDIT_PER_VOTES })
+  res.json({ axes: AXES, guessAxes: GUESS_AXES, games: GAMES, cost: COST, pairsAmount: PAIRS_AMOUNT,
+    creditPerVotes: CREDIT_PER_VOTES, game: { rounds: GAME_ROUNDS, need: GAME_NEED, reward: GAME_REWARD } })
 );
 
 // ---------- Profile (owned by the session account) ----------
@@ -235,10 +236,23 @@ app.post("/api/guess", (req, res) => {
   res.json(outcome);
 });
 
+// Save one self-report answer (the game's "first, about you" step).
+app.post("/api/answer", requireProfile, (req, res) => {
+  const qid = String(req.body?.qid || "");
+  const i = Number(req.body?.i);
+  if (!QUESTIONS.some((q) => q.id === qid)) return res.status(400).json({ error: "unknown question" });
+  store.setAnswer(req.profile.id, qid, i);
+  res.json({ ok: true });
+});
+
+const GAME_ROUNDS = 5;
+const GAME_NEED = 3; // 3 of 5 correct
+const GAME_REWARD = 2; // earns 2 credits
+app.get("/api/game-config", (_req, res) => res.json({ rounds: GAME_ROUNDS, need: GAME_NEED, reward: GAME_REWARD }));
 app.post("/api/games/reward", requireProfile, (req, res) => {
-  const earned = Number(req.body?.correct) >= 3; // only a perfect 3/3 pays out
-  if (earned) store.addCredits(req.profile.id, 1);
-  res.json({ earned, credits: req.profile.credits });
+  const earned = Number(req.body?.correct) >= GAME_NEED; // 3 of 5
+  if (earned) store.addCredits(req.profile.id, GAME_REWARD);
+  res.json({ earned, reward: GAME_REWARD, credits: req.profile.credits });
 });
 
 app.get("/api/guess-stats", requireProfile, (req, res) => res.json(store.guessStats(req.profile.id)));

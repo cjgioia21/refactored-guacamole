@@ -106,14 +106,21 @@ button:disabled { opacity: .45; cursor: default; }
 .q-num { color: var(--muted); font-weight: 700; }
 .q .cat { font-size: 11px; text-transform: uppercase; letter-spacing: 1px; color: var(--accent); }
 .q p { margin: 4px 0 10px; font-weight: bold; }
-.opts { display: flex; flex-wrap: wrap; gap: 8px; }
-.opt { border: 1px solid var(--line); background: #f7f8fc; border-radius: 999px; padding: 8px 14px; font-size: 14px; cursor: pointer; }
+/* Full-width stacked answer buttons (the primary style). */
+.opts { display: flex; flex-direction: column; gap: 10px; }
+.opt { border: 1px solid var(--line); background: #fff; border-radius: 14px; padding: 15px 18px; font-size: 16px; font-weight: 600; color: #3b4260; cursor: pointer; text-align: left; transition: background .12s, border-color .12s; }
+.opt:hover { border-color: var(--accent); }
 .opt.sel { background: var(--accent); color: #fff; border-color: var(--accent); }
-.opts.fine { margin-top: 10px; padding-top: 10px; border-top: 1px dashed var(--line); align-items: center; }
-.opts.fine .opt { background: #eef2ff; }
-.opts.fine .opt.sel { background: var(--accent); }
-.fine-label { width: 100%; color: var(--muted); font-size: 13px; margin-bottom: 2px; }
+/* Compact chip rows: mental-health multi-select and tiered coarse ranges. */
+#mh { display: flex; flex-wrap: wrap; gap: 8px; }
+#mh .opt, .opts.tiers { }
+#mh .opt { width: auto; border-radius: 999px; padding: 8px 14px; font-size: 14px; font-weight: 400; }
+.opts.tiers { flex-direction: row; flex-wrap: wrap; gap: 8px; }
+.opts.tiers .opt { width: auto; border-radius: 999px; padding: 9px 16px; font-size: 15px; }
 .opt.tier.sel { background: var(--navy); border-color: var(--navy); }
+.opts.fine { margin-top: 10px; padding-top: 12px; border-top: 1px dashed var(--line); }
+.opts.fine .opt.sel { background: var(--accent); }
+.fine-label { color: var(--muted); font-size: 13px; margin-bottom: 2px; }
 
 /* ---------- matchup ---------- */
 .matchup { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
@@ -139,10 +146,15 @@ button:disabled { opacity: .45; cursor: default; }
 .game-cell .g-cat { font-size: 11px; text-transform: uppercase; letter-spacing: 1px; color: var(--accent); }
 .game-cell h4 { margin: 4px 0; font-size: 17px; }
 .game-cell .acc { color: var(--good); font-weight: bold; }
+.game-sub { color: var(--muted); margin: 0 0 14px; }
 .game-target { text-align: center; }
-.game-target img, .game-target .avatar { width: 200px; aspect-ratio: 3/4; margin: 0 auto; border-radius: 14px; }
-.game-q { font-size: 20px; font-weight: bold; margin: 14px 0; }
+.game-target img, .game-target .avatar { width: 200px; aspect-ratio: 3/4; margin: 0 auto 6px; border-radius: 14px; }
+.game-target .opts { text-align: left; }
+.game-q { font-size: 20px; font-weight: 700; margin: 14px 0; }
 .game-actions { display: flex; gap: 12px; justify-content: center; flex-wrap: wrap; }
+.games-nav { color: var(--muted); font-size: 14px; margin: 18px 2px; line-height: 1.9; border-top: 1px solid var(--line); padding-top: 14px; }
+.games-nav a { color: var(--accent); text-decoration: underline; cursor: pointer; }
+.games-nav a.on { font-weight: 700; text-decoration: none; }
 .result { text-align: center; font-weight: bold; margin: 14px 0; }
 .result.ok { color: var(--good); }
 .result.no { color: var(--red); }

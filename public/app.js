@@ -91,59 +91,58 @@ async function buildForms() {
     if (f === "none") { selectedMH.clear(); $("#mh").querySelectorAll(".sel").forEach((x) => x.classList.remove("sel")); }
     else { selectedMH.has(f) ? selectedMH.delete(f) : selectedMH.add(f); el.classList.toggle("sel"); }
   }));
-  const { questions } = (await api("/api/questions")).body;
+  QUESTION_CACHE = (await api("/api/questions")).body.questions;
   let lastCat = null;
-  $("#questions").innerHTML = questions.map((q, n) => {
+  $("#questions").innerHTML = QUESTION_CACHE.map((q, n) => {
     const header = q.category !== lastCat ? `<div class="quiz-head">${esc(q.category)} <span class="hint">quiz</span></div>` : "";
     lastCat = q.category;
-    const body = q.type === "tiered"
-      ? `<div class="opts tiers">${q.tierGroups.map((t, ti) => `<span class="opt tier" data-tier="${ti}">${esc(t.label)}</span>`).join("")}</div>
-         <div class="opts fine" hidden></div>`
-      : `<div class="opts">${q.options.map((o, i) => `<span class="opt" data-i="${i}">${esc(o.label)}</span>`).join("")}</div>`;
     return `${header}<div class="q" data-qid="${q.id}">
-      <p><span class="q-num">${n + 1}.</span> ${esc(q.prompt)}</p>${body}</div>`;
+      <p><span class="q-num">${n + 1}.</span> ${esc(q.prompt)}</p>${questionBodyHTML(q)}</div>`;
   }).join("");
+  $("#questions").querySelectorAll(".q").forEach((qEl) => wireQuestion(qEl, byId(qEl.dataset.qid)));
+}
 
-  // Simple questions: click sets the answer.
-  $("#questions").querySelectorAll(".q > .opts:not(.tiers):not(.fine)").forEach((opts) =>
-    opts.querySelectorAll(".opt").forEach((opt) => opt.addEventListener("click", () => {
-      opts.querySelectorAll(".opt").forEach((o) => o.classList.remove("sel"));
-      opt.classList.add("sel");
-      opt.closest(".q").dataset.answer = opt.dataset.i;
-    })));
+let QUESTION_CACHE = [];
+const byId = (id) => QUESTION_CACHE.find((q) => q.id === id);
 
-  // Tiered questions: pick a range -> expand finer options -> pick the exact one.
-  const qByGroups = Object.fromEntries(questions.filter((q) => q.type === "tiered").map((q) => [q.id, q.tierGroups]));
-  $("#questions").querySelectorAll(".q").forEach((qEl) => {
+// Full-width stacked option buttons; tiered questions expand a finer row.
+function questionBodyHTML(q) {
+  if (q.type === "tiered") {
+    return `<div class="opts tiers">${q.tierGroups.map((t, ti) => `<span class="opt tier" data-tier="${ti}">${esc(t.label)}</span>`).join("")}</div>
+            <div class="opts fine" hidden></div>`;
+  }
+  return `<div class="opts">${q.options.map((o, i) => `<span class="opt" data-i="${i}">${esc(o.label)}</span>`).join("")}</div>`;
+}
+
+// Wire a rendered question element. Calls onAnswer(index) when a final value is chosen.
+function wireQuestion(qEl, q, onAnswer) {
+  if (!q) return;
+  const choose = (opts, i) => {
+    opts.querySelectorAll(".opt").forEach((o) => o.classList.remove("sel"));
+    opts.querySelector(`[data-i="${i}"]`)?.classList.add("sel");
+    qEl.dataset.answer = i;
+    onAnswer?.(Number(i));
+  };
+  if (q.type === "tiered") {
     const tierRow = qEl.querySelector(".tiers");
-    if (!tierRow) return;
-    const groups = qByGroups[qEl.dataset.qid];
     const fineRow = qEl.querySelector(".fine");
     tierRow.querySelectorAll(".tier").forEach((tierEl) => tierEl.addEventListener("click", () => {
       tierRow.querySelectorAll(".tier").forEach((t) => t.classList.remove("sel"));
       tierEl.classList.add("sel");
-      const g = groups[Number(tierEl.dataset.tier)];
-      // render the finer options for this range
+      const g = q.tierGroups[Number(tierEl.dataset.tier)];
+      fineRow.hidden = false;
       const opts = [];
       for (let i = g.from; i < g.from + g.count; i++) opts.push(i);
-      fineRow.hidden = false;
       fineRow.innerHTML = (g.count > 1 ? `<span class="fine-label">exactly how many?</span>` : "") +
-        opts.map((i) => `<span class="opt" data-i="${i}">${esc(questionsFineLabel(qEl, i))}</span>`).join("");
-      // auto-select if the range has a single value
-      if (g.count === 1) qEl.dataset.answer = g.from;
+        opts.map((i) => `<span class="opt" data-i="${i}">${esc(q.options[i].label)}</span>`).join("");
+      if (g.count === 1) { qEl.dataset.answer = g.from; onAnswer?.(g.from); }
       else delete qEl.dataset.answer;
-      fineRow.querySelectorAll(".opt").forEach((opt) => opt.addEventListener("click", () => {
-        fineRow.querySelectorAll(".opt").forEach((o) => o.classList.remove("sel"));
-        opt.classList.add("sel");
-        qEl.dataset.answer = opt.dataset.i;
-      }));
+      fineRow.querySelectorAll(".opt").forEach((opt) => opt.addEventListener("click", () => choose(fineRow, opt.dataset.i)));
     }));
-  });
-  // stash option labels for tiered fine rendering
-  window.__tieredOpts = Object.fromEntries(questions.filter((q) => q.type === "tiered").map((q) => [q.id, q.options]));
-}
-function questionsFineLabel(qEl, i) {
-  return (window.__tieredOpts?.[qEl.dataset.qid]?.[i]?.label) ?? String(i);
+  } else {
+    const opts = qEl.querySelector(".opts");
+    opts.querySelectorAll(".opt").forEach((opt) => opt.addEventListener("click", () => choose(opts, opt.dataset.i)));
+  }
 }
 
 $("#onboard-form").addEventListener("submit", async (e) => {
@@ -210,10 +209,10 @@ async function renderGameGrid() {
   const games = META.games || [];
   $("#game-grid").innerHTML = games.map((g) => {
     const acc = stats[g.axis]?.accuracy;
-    return `<div class="game-cell" data-axis="${g.axis}" data-label="${esc(g.label)}"><div class="g-cat">GUESS</div><h4>${g.emoji || ""} ${esc(g.label)}</h4>
+    return `<div class="game-cell" data-game="${g.key}"><div class="g-cat">GUESS</div><h4>${g.emoji || ""} ${esc(g.label)}</h4>
       <span class="acc">${acc == null ? "—" : acc + "%"}</span> <span class="meta">accurate · play →</span></div>`;
   }).join("");
-  $("#game-grid").querySelectorAll("[data-axis]").forEach((el) => el.addEventListener("click", () => playGame(el.dataset.axis, el.dataset.label)));
+  $("#game-grid").querySelectorAll("[data-game]").forEach((el) => el.addEventListener("click", () => playGame(el.dataset.game)));
 }
 
 // ================= Matchup =================
@@ -260,7 +259,7 @@ async function loadReport() {
     let right;
     if (g.revealed && g.result) right = `<span class="reveal-val">${esc(g.result.pole)} · ${g.result.pct}%</span>`;
     else if (g.ready) right = `<button class="reveal-btn" data-reveal="${g.key}">reveal · ${r.cost.reveal}✦</button>`;
-    else right = `<button class="reveal-btn collecting" data-play-axis="${gameAxis(g.key)}" data-label="${esc(g.label)}">still collecting · play →</button>`;
+    else right = `<button class="reveal-btn collecting" data-play-game="${g.key}">still collecting · play →</button>`;
     return `<div class="guess-row"><span class="g-name">${g.emoji || ""} ${esc(g.label)}</span>${right}</div>`;
   }).join("");
   const guesses = `<div class="card"><div class="section-title" style="margin-top:0">🔮 What strangers guess about your photo</div>
@@ -283,11 +282,10 @@ async function loadReport() {
   $("#go-matches")?.addEventListener("click", () => show("matches"));
   $("#buy-pairs")?.addEventListener("click", () => spendAction("/api/buy-pairs", {}));
   $("#report").querySelectorAll("[data-reveal]").forEach((b) => b.addEventListener("click", () => spendAction("/api/reveal", { game: b.dataset.reveal })));
-  $("#report").querySelectorAll("[data-play-axis]").forEach((b) => b.addEventListener("click", () => playGame(b.dataset.playAxis, b.dataset.label)));
+  $("#report").querySelectorAll("[data-play-game]").forEach((b) => b.addEventListener("click", () => playGame(b.dataset.playGame)));
   $("#unlock-fans")?.addEventListener("click", () => spendAction("/api/unlock-fans", {}));
   $("#email-pref")?.addEventListener("change", (e) => post("/api/email-pref", { on: e.target.checked }));
 }
-const gameAxis = (key) => (META.games.find((g) => g.key === key) || {}).axis;
 
 function lockedFansCard(f, credits) {
   const pct = Math.min(100, Math.round((credits / f.cost) * 100));
@@ -341,44 +339,73 @@ function socialLinks(s) {
 }
 
 // ================= Guessing game play =================
-async function playGame(axis, label) {
+const gamesFooter = (activeKey) =>
+  `<div class="games-nav">games: ${(META.games || []).map((g) =>
+    `<a class="${g.key === activeKey ? "on" : ""}" data-goto="${g.key}">${esc(g.label.toLowerCase())}</a>`).join(" · ")} · <a data-goto="home">home</a></div>`;
+
+async function playGame(gameKey) {
   show("games");
-  const game = (META.games || []).find((g) => g.axis === axis);
-  $("#game-title").textContent = `Guess: ${label || game?.label || axis}`;
-  let round = 0, correct = 0;
-  const prompts = {
-    age: ["Older or younger than 30?", [["under 30", "under 30"], ["30+", "30+"]]],
-    gender: ["What's their gender?", [["woman", "woman"], ["man", "man"], ["nonbinary", "nonbinary"]]],
-    mh: ["Do they report a mental-health condition?", [["yes", "yes"], ["no", "no"]]],
-  };
-  if (game) prompts[axis] = [`${game.emoji} ${game.label}?`, [[game.poles[0], "low"], [game.poles[1], "high"]]];
-  const finish = async () => {
-    const { body: rew } = await post("/api/games/reward", { correct });
-    if (rew?.credits != null) { setCredits(rew.credits); me.profile.credits = rew.credits; }
-    $("#game-play").innerHTML = `<div class="card" style="text-align:center"><h3>${correct}/3 correct${rew?.earned ? " — +1 credit ✦" : ""}</h3>
-      <button class="primary" id="again">play again</button> <button class="outline" data-view="home">home</button></div>`;
-    $("#again").addEventListener("click", () => playGame(axis, label));
-    $("#game-play").querySelector("[data-view=home]").addEventListener("click", () => { renderGameGrid(); show("home"); });
-  };
-  const next = async () => {
-    if (round >= 3) return finish();
-    round++;
-    const { status, body: g } = await api(`/api/guess?axis=${axis}`);
-    if (status >= 400) return ($("#game-play").innerHTML = `<p class="empty">Need more profiles to play.</p>`);
-    const [prompt, opts] = prompts[axis] || [`Are they high or low on ${axis}?`, [["low", "low"], ["high", "high"]]];
-    $("#game-play").innerHTML = `<div class="progress">Round ${round}/3 · ${correct} correct</div>
-      <div class="game-target">${avatar(g.target)}<div class="game-q">${esc(prompt)}</div>
-      <div class="game-actions">${opts.map(([label, val]) => `<button class="primary" data-g="${esc(val)}">${esc(label)}</button>`).join("")}</div></div>
-      <div class="result" id="game-result"></div>`;
-    $("#game-play").querySelectorAll("[data-g]").forEach((b) => b.addEventListener("click", async () => {
-      $("#game-play").querySelectorAll("[data-g]").forEach((x) => (x.disabled = true));
-      const { body: out } = await post("/api/guess", { targetId: g.target.id, axis, guess: b.dataset.g });
-      if (out.correct) correct++;
-      const res = $("#game-result");
-      res.className = "result " + (out.correct ? "ok" : "no");
-      res.textContent = (out.correct ? "Correct! " : "Nope — ") + "actually: " + out.actualLabel;
-      setTimeout(next, 1100);
-    }));
-  };
-  next();
+  const game = (META.games || []).find((g) => g.key === gameKey);
+  if (!game) return;
+  const cfg = META.game || { rounds: 5, need: 3, reward: 2 };
+  $("#game-title").textContent = game.title;
+  const wrap = $("#game-play");
+
+  const wireFooter = () => wrap.querySelectorAll("[data-goto]").forEach((a) =>
+    a.addEventListener("click", () => a.dataset.goto === "home" ? (renderGameGrid(), show("home")) : playGame(a.dataset.goto)));
+
+  // ---- Step 1: the same question about you ----
+  const selfQ = byId(game.selfQ);
+  wrap.innerHTML = `<p class="game-sub">For every ${cfg.need}/${cfg.rounds} correct, earn ${cfg.reward} credits.</p>
+    <div class="card"><h3>First, the same question about you</h3>
+      <p class="sub">Fair's fair: before guessing about others, your own answer goes in the pot. It stays private and is only used in aggregate.</p>
+      <div class="q" data-qid="${selfQ.id}"><p>${esc(selfQ.prompt)}</p>${questionBodyHTML(selfQ)}</div>
+    </div>${gamesFooter(game.key)}`;
+  wireFooter();
+  wireQuestion(wrap.querySelector(".q"), selfQ, async (i) => {
+    await post("/api/answer", { qid: selfQ.id, i });
+    setTimeout(runRounds, 350); // brief beat so the selection registers visually
+  });
+
+  // ---- Step 2: guess about others ----
+  async function runRounds() {
+    let round = 0, correct = 0;
+    const next = async () => {
+      if (round >= cfg.rounds) return finish();
+      round++;
+      const { status, body: g } = await api(`/api/guess?axis=${game.axis}`);
+      if (status >= 400) { wrap.innerHTML = `<p class="empty">Need more profiles to play.</p>` + gamesFooter(game.key); wireFooter(); return; }
+      wrap.innerHTML = `<p class="game-sub">Round ${round} of ${cfg.rounds} · ${correct} correct</p>
+        <div class="card game-target">${avatar(g.target)}
+          <div class="game-q">${game.emoji} Is ${esc(g.target.name)} more…</div>
+          <div class="opts">
+            <span class="opt" data-g="high">${esc(game.poles[1])}</span>
+            <span class="opt" data-g="low">${esc(game.poles[0])}</span>
+          </div>
+          <div class="result" id="game-result"></div>
+        </div>${gamesFooter(game.key)}`;
+      wireFooter();
+      wrap.querySelectorAll("[data-g]").forEach((b) => b.addEventListener("click", async () => {
+        wrap.querySelectorAll("[data-g]").forEach((x) => x.style.pointerEvents = "none");
+        b.classList.add("sel");
+        const { body: out } = await post("/api/guess", { targetId: g.target.id, axis: game.axis, guess: b.dataset.g });
+        if (out.correct) correct++;
+        const res = $("#game-result");
+        res.className = "result " + (out.correct ? "ok" : "no");
+        res.textContent = (out.correct ? "Correct! " : "Nope — ") + "they're " + out.actualLabel;
+        setTimeout(next, 1100);
+      }));
+    };
+    const finish = async () => {
+      const { body: rew } = await post("/api/games/reward", { correct });
+      if (rew?.credits != null) { setCredits(rew.credits); me.profile.credits = rew.credits; }
+      wrap.innerHTML = `<div class="card" style="text-align:center">
+        <h3>${correct}/${cfg.rounds} correct${rew?.earned ? ` — +${rew.reward} credits ✦` : ""}</h3>
+        <p class="sub">${rew?.earned ? "Nice read." : `Get ${cfg.need}/${cfg.rounds} to earn credits.`}</p>
+        <button class="primary" id="again">play again</button></div>${gamesFooter(game.key)}`;
+      wireFooter();
+      $("#again").addEventListener("click", () => playGame(game.key));
+    };
+    next();
+  }
 }

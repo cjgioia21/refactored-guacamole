@@ -28,7 +28,9 @@ games; questionnaire answers are never shown to anyone.
 ## Credits
 
 Credits are deliberately **hard to earn** — you get them by rating other people
-(1 credit per **12** votes) and by acing a guessing round (a perfect **3/3**):
+(1 credit per **12** votes) and by playing guessing rounds (**3 of 5 → 2 credits**).
+Each game opens with "the same question about you" — your private self-answer that
+feeds the aggregate — before you guess about others:
 
 | Spend | Cost | What you get |
 |-------|-----:|--------------|
@@ -106,7 +108,8 @@ gender, orientation, mental health) are structured fields collected separately.
 | GET    | `/api/report`                | attractiveness band, guess reveals, fans, type |
 | GET    | `/api/matches`               | mutual matches (**socials revealed**)         |
 | GET/POST | `/api/guess`               | serve / answer a guessing round               |
-| POST   | `/api/games/reward`          | `{correct}` — credit only on a perfect 3/3     |
+| POST   | `/api/answer`                | `{qid, i}` — save one self-answer (game step)  |
+| POST   | `/api/games/reward`          | `{correct}` — 2 credits on 3 of 5 correct      |
 | GET    | `/api/guess-stats`           | per-game accuracy for the signed-in user      |
 | POST   | `/api/reveal`                | `{game}` — spend 30✦ to reveal a guess         |
 | POST   | `/api/buy-pairs`             | spend 75✦ for +200 prioritized matchups        |

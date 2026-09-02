@@ -101,6 +101,16 @@ export function update(id, p = {}) {
   return user;
 }
 
+// Merge a single questionnaire answer and recompute the trait vector.
+export function setAnswer(id, qid, optionIndex) {
+  const user = get(id);
+  if (!user) return null;
+  user.answers = { ...(user.answers || {}), [qid]: Number(optionIndex) };
+  user.traits = profileFromAnswers(user.answers);
+  persist();
+  return user;
+}
+
 export function remove(id) {
   const before = users.length;
   users = users.filter((u) => u.id !== id);

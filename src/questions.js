@@ -4,7 +4,7 @@
 
 export const AXES = {
   bodycount: ["low bodycount", "high bodycount"], // sexual experience / promiscuity
-  networth: ["lower income", "higher income"], // income / wealth / class
+  networth: ["lower net worth", "higher net worth"], // net worth / wealth / class
   pol: ["left", "right"], // politics
   dom: ["submissive", "dominant"], // dominance
   gooner: ["tame", "gooner"], // porn / goon habits
@@ -63,7 +63,13 @@ export const QUESTIONS = [
   q("bc12", "Bodycount", "Age you became sexually active suggests you're…", "bodycount",
     [["a late bloomer", -1], ["later than most", -0.5], ["average", 0], ["earlier than most", 0.5], ["very early", 1]]),
 
-  // ---------- Net worth (income / wealth / class) ----------
+  // ---------- Net worth (net worth / wealth / class) ----------
+  q("nw0", "Net worth", "Your CURRENT net worth is closest to", "networth",
+    [["$100,000,000 or more", 1], ["$30,000,000", 0.9], ["$10,000,000", 0.8], ["$3,000,000", 0.7],
+     ["$1,000,000", 0.6], ["$300,000", 0.45], ["$100,000", 0.3], ["$30,000", 0.15], ["$10,000", 0.05],
+     ["$3,000", -0.02], ["$1,000", -0.05], ["$0", -0.1], ["$-1,000 (in debt)", -0.2], ["$-3,000 (in debt)", -0.3],
+     ["$-10,000 (in debt)", -0.45], ["$-30,000 (in debt)", -0.6], ["$-100,000 (in debt)", -0.75],
+     ["$-300,000 (in debt)", -0.88], ["$-1,000,000 (in debt)", -1]]),
   q("nw1", "Net worth", "Your annual income is…", "networth",
     [["very low", -1], ["below average", -0.5], ["average", 0], ["above average", 0.5], ["very high", 1]]),
   q("nw2", "Net worth", "Do you rent or own your home?", "networth",
@@ -98,14 +104,17 @@ export const QUESTIONS = [
   q("pol8", "Politics", "Traditional values should be…", "pol", S5("questioned", "upheld")),
   q("pol9", "Politics", "Universal healthcare?", "pol", rev(AGREE)),
   q("pol10", "Politics", "On crime, you favor…", "pol", S5("reform", "law and order")),
-  q("pol11", "Politics", "Overall you lean…", "pol",
-    [["very left", -1], ["left", -0.5], ["center", 0], ["right", 0.5], ["very right", 1]]),
+  q("pol11", "Politics", "Economically speaking, you tend to be more:", "pol",
+    [["Significantly liberal/left", -1], ["Moderately liberal/left", -0.66], ["Slightly liberal/left", -0.33],
+     ["Equally liberal / conservative", 0], ["Slightly conservative/right", 0.33],
+     ["Moderately conservative/right", 0.66], ["Significantly conservative/right", 1]]),
   q("pol12", "Politics", "Diversity & identity initiatives are…", "pol", S5("essential", "overdone")),
 
   // ---------- Dominance (dom / sub) ----------
   q("dom1", "Dominance", "In relationships you tend to…", "dom", S5("follow", "lead")),
-  q("dom2", "Dominance", "In bed you prefer to be…", "dom",
-    [["submissive", -1], ["mostly sub", -0.5], ["a switch", 0], ["mostly dom", 0.5], ["dominant", 1]]),
+  q("dom2", "Dominance", "In the bedroom, are you more dominant or submissive?", "dom",
+    [["Very dominant", 1], ["Dominant", 0.66], ["Slightly dominant", 0.33], ["Switch / equally both", 0],
+     ["Slightly submissive", -0.33], ["Submissive", -0.66], ["Very submissive", -1]]),
   q("dom3", "Dominance", "In a group you usually…", "dom", S5("go with the flow", "make the call")),
   q("dom4", "Dominance", "Giving orders vs. taking them?", "dom", S5("prefer taking", "prefer giving")),
   q("dom5", "Dominance", "\"I like being in charge.\"", "dom", AGREE),
@@ -118,7 +127,10 @@ export const QUESTIONS = [
   q("dom12", "Dominance", "Being praised vs. being obeyed?", "dom", S5("praised", "obeyed")),
 
   // ---------- Gooner Nature (porn / goon habits) ----------
-  q("gn1", "Gooner Nature", "How often do you watch porn?", "gooner", FREQ),
+  q("gn1", "Gooner Nature", "How often do you watch or read pornographic/erotic content?", "gooner",
+    [["I don't", -1], ["Multiple times a day", 1], ["Daily", 0.8], ["Multiple times a week", 0.6],
+     ["Once a week", 0.35], ["A few times a month", 0.1], ["Once a month", -0.15],
+     ["A few times a year", -0.5], ["Once a year", -0.75], ["Less than once a year", -0.9]]),
   q("gn2", "Gooner Nature", "A typical session lasts…", "gooner",
     [["minutes", -1], ["short", -0.5], ["a while", 0], ["long", 0.5], ["hours", 1]]),
   q("gn3", "Gooner Nature", "Do you edge / drag it out?", "gooner", FREQ),
