@@ -24,6 +24,11 @@ const CREDIT_PACKS = [
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const app = express();
 const PORT = process.env.PORT || 3000;
+const HOST = process.env.HOST || "0.0.0.0";
+
+// Behind a reverse proxy / PaaS load balancer, trust X-Forwarded-* so secure
+// cookies and https detection work.
+if (process.env.NODE_ENV === "production") app.set("trust proxy", 1);
 
 app.use(express.json({ limit: "1mb" })); // room for small uploaded data: URLs
 app.use(express.static(join(__dirname, "public")));
@@ -362,7 +367,7 @@ function weightedPick(pool, exclude) {
 }
 
 if (process.env.NODE_ENV !== "test") {
-  app.listen(PORT, () => console.log(`TrueHumanNature running on http://localhost:${PORT}`));
+  app.listen(PORT, HOST, () => console.log(`TrueHumanNature running on http://${HOST}:${PORT}`));
 }
 
 export default app;

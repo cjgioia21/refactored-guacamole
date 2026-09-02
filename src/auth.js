@@ -3,14 +3,18 @@
 // signing use node:crypto.
 import { readFileSync, writeFileSync, existsSync } from "node:fs";
 import { randomUUID, randomBytes, scryptSync, timingSafeEqual, createHmac } from "node:crypto";
+import { dataFile } from "./paths.js";
 
-const ACCOUNTS_FILE = new URL("../data/accounts.json", import.meta.url);
-const SECRET_FILE = new URL("../data/.secret", import.meta.url);
+const ACCOUNTS_FILE = dataFile("accounts.json");
+const SECRET_FILE = dataFile(".secret");
 const COOKIE = "sm_session";
 const SESSION_DAYS = 30;
+const SECURE_COOKIES = process.env.NODE_ENV === "production" && process.env.INSECURE_COOKIES !== "1";
 
 let accounts = load();
-const SECRET = loadSecret();
+// A stable secret keeps sessions valid across restarts. Prefer an env var
+// (best for multi-instance / ephemeral disks), then a persisted file.
+const SECRET = process.env.SESSION_SECRET || loadSecret();
 
 function load() {
   try {
@@ -81,11 +85,13 @@ function parseCookies(req) {
 }
 function setSession(res, accountId) {
   const token = sign(`${accountId}|${Date.now()}`);
+  const secure = SECURE_COOKIES ? "; Secure" : "";
   res.setHeader("Set-Cookie",
-    `${COOKIE}=${encodeURIComponent(token)}; HttpOnly; Path=/; Max-Age=${SESSION_DAYS * 86400}; SameSite=Lax`);
+    `${COOKIE}=${encodeURIComponent(token)}; HttpOnly; Path=/; Max-Age=${SESSION_DAYS * 86400}; SameSite=Lax${secure}`);
 }
 function clearSession(res) {
-  res.setHeader("Set-Cookie", `${COOKIE}=; HttpOnly; Path=/; Max-Age=0; SameSite=Lax`);
+  const secure = SECURE_COOKIES ? "; Secure" : "";
+  res.setHeader("Set-Cookie", `${COOKIE}=; HttpOnly; Path=/; Max-Age=0; SameSite=Lax${secure}`);
 }
 
 // --- accounts ---

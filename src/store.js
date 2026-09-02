@@ -4,8 +4,9 @@ import { randomUUID } from "node:crypto";
 import { profileFromAnswers } from "./questions.js";
 import { emptyAcc } from "./vectors.js";
 import { BASE_ELO } from "./engine.js";
+import { dataFile } from "./paths.js";
 
-const DATA_FILE = new URL("../data/users.json", import.meta.url);
+const DATA_FILE = dataFile("users.json");
 
 let users = load(DATA_FILE, []);
 
