@@ -1,4 +1,4 @@
-// In-memory user store with JSON file persistence.
+// In-memory profile store with JSON file persistence.
 import { readFileSync, writeFileSync, existsSync } from "node:fs";
 import { randomUUID } from "node:crypto";
 import { profileFromAnswers } from "./questions.js";
@@ -6,10 +6,8 @@ import { emptyAcc } from "./vectors.js";
 import { BASE_ELO } from "./engine.js";
 
 const DATA_FILE = new URL("../data/users.json", import.meta.url);
-const THREADS_FILE = new URL("../data/threads.json", import.meta.url);
 
 let users = load(DATA_FILE, []);
-let threads = load(THREADS_FILE, {}); // { pairKey: [{from, text, at}] }
 
 function load(file, fallback) {
   try {
@@ -28,21 +26,14 @@ function persist() {
   }
 }
 
-function persistThreads() {
-  try {
-    writeFileSync(THREADS_FILE, JSON.stringify(threads, null, 2));
-  } catch {
-    /* best-effort */
-  }
-}
-
-const pairKey = (a, b) => [a, b].sort().join("__");
-
 export function all() {
   return users;
 }
 export function get(id) {
   return users.find((u) => u.id === id) || null;
+}
+export function byAccount(accountId) {
+  return users.find((u) => u.accountId === accountId) || null;
 }
 
 const cleanFlags = (v) =>
@@ -61,13 +52,14 @@ function normSocials(s) {
 export function create(p = {}) {
   const user = {
     id: randomUUID(),
+    accountId: p.accountId || null, // owning login account
     name: String(p.name || "Anonymous").slice(0, 80),
     photo: String(p.photo || "").slice(0, 500),
     age: Number(p.age) || null,
     gender: p.gender || null, // man | woman | nonbinary
     orientation: p.orientation || "straight", // straight | gay | lesbian | bi
     mentalHealth: cleanFlags(p.mentalHealth), // [] or e.g. ["anxiety"]
-    socials: normSocials(p.socials), // PRIVATE — revealed only on mutual share
+    socials: normSocials(p.socials), // PRIVATE — revealed only to a mutual match
     answers: p.answers || {},
     traits: profileFromAnswers(p.answers || {}),
     elo: BASE_ELO,
@@ -77,6 +69,7 @@ export function create(p = {}) {
     type: emptyAcc(), // what this user finds attractive (learned from votes)
     admirers: emptyAcc(), // who finds this user attractive
     ratings: {}, // { otherId: { w, l } } revealed preference from matchups
+    guessStats: {}, // { axis: { correct, total } } guessing-game accuracy
     createdAt: new Date().toISOString(),
   };
   users.push(user);
@@ -105,14 +98,8 @@ export function update(id, p = {}) {
 export function remove(id) {
   const before = users.length;
   users = users.filter((u) => u.id !== id);
-  for (const u of users) {
-    if (u.ratings) delete u.ratings[id];
-  }
-  for (const key of Object.keys(threads)) {
-    if (key.split("__").includes(id)) delete threads[key];
-  }
+  for (const u of users) if (u.ratings) delete u.ratings[id];
   persist();
-  persistThreads();
   return users.length < before;
 }
 
@@ -125,23 +112,27 @@ export function addCredits(id, n) {
   return user;
 }
 
-// --- Messaging (unlocked only between mutually-matched users) ---
-
-export function thread(a, b) {
-  return threads[pairKey(a, b)] || [];
+// Record a guessing-game outcome for accuracy tracking.
+export function recordGuess(id, axis, correct) {
+  const user = get(id);
+  if (!user) return;
+  user.guessStats = user.guessStats || {};
+  const s = user.guessStats[axis] || (user.guessStats[axis] = { correct: 0, total: 0 });
+  s.total += 1;
+  if (correct) s.correct += 1;
+  persist();
+}
+export function guessStats(id) {
+  const user = get(id);
+  if (!user) return {};
+  const out = {};
+  for (const [axis, s] of Object.entries(user.guessStats || {})) {
+    out[axis] = { ...s, accuracy: s.total ? Math.round((s.correct / s.total) * 100) : null };
+  }
+  return out;
 }
 
-// Append a message. Caller must verify the two users are a mutual match.
-export function addMessage(from, to, text) {
-  const body = String(text || "").slice(0, 1000).trim();
-  if (!body) return null;
-  const key = pairKey(from, to);
-  (threads[key] || (threads[key] = [])).push({ from, text: body, at: new Date().toISOString() });
-  persistThreads();
-  return threads[key];
-}
-
-// Matched-user view: reveals socials, which mutual matching consents to.
+// Matched-user view: reveals socials, which a mutual match consents to.
 export function matchView(u) {
   if (!u) return null;
   return { id: u.id, name: u.name, photo: u.photo, age: u.age, gender: u.gender, socials: u.socials };
@@ -151,7 +142,7 @@ export function save() {
   persist();
 }
 
-// Public shape — never leaks answers, accumulators, socials, or shares.
+// Public shape — never leaks answers, accumulators, or socials.
 export function publicView(u) {
   if (!u) return null;
   return {
@@ -160,6 +151,7 @@ export function publicView(u) {
     photo: u.photo,
     age: u.age,
     gender: u.gender,
+    orientation: u.orientation,
     elo: Math.round(u.elo),
     matchups: u.matchups || 0,
     credits: u.credits || 0,

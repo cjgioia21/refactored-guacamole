@@ -3,104 +3,126 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>StudyMatch — attraction-based matchmaking</title>
+  <title>StudyMatch — self discovery through the eyes of others</title>
   <link rel="stylesheet" href="style.css" />
 </head>
 <body>
-  <header>
-    <div class="brand">Study<span>Match</span> <em>beta</em></div>
-    <div class="creds"><span id="credits">0</span> ✦</div>
-  </header>
+  <div class="topbar"><span class="url-pill">studymatch.app</span></div>
+  <div class="banner">Rate. Get rated. Match with the people you're into who are into you back.</div>
 
-  <main>
-    <!-- Landing -->
-    <section id="view-landing" class="view active">
-      <div class="hero">
-        <h1>STUDY OF <b>US</b></h1>
-        <p class="tag">Strangers rate your photo; you rate theirs. Get an honest report on how attractive you are — and match with the people you're attracted to, who are attracted to you back.</p>
-        <div class="hero-actions">
-          <button class="ghost" data-view="matchup">rate others →</button>
-          <button class="primary" data-view="onboard">get rated →</button>
-        </div>
-      </div>
-    </section>
-
-    <!-- Onboarding: photo + demographics + socials + questionnaire -->
-    <section id="view-onboard" class="view">
-      <h2>Create your profile</h2>
-      <p class="sub">Add a photo and answer honestly. Answers stay private — they only power your report and matches.</p>
-      <form id="onboard-form">
-        <label>Name <input name="name" required maxlength="80" /></label>
-        <label>Photo URL <span class="hint">optional — an avatar is used otherwise</span>
-          <input name="photo" placeholder="https://…" />
-        </label>
-        <div class="row3">
-          <label>Age <input name="age" type="number" min="18" max="99" /></label>
-          <label>Gender
-            <select name="gender"><option value="woman">woman</option><option value="man">man</option><option value="nonbinary">nonbinary</option></select>
-          </label>
-          <label>Orientation
-            <select name="orientation"><option value="straight">straight</option><option value="gay">gay</option><option value="lesbian">lesbian</option><option value="bi">bi</option></select>
-          </label>
-        </div>
-        <fieldset>
-          <legend>Mental health <span class="hint">optional, private</span></legend>
-          <div id="mh" class="opts"></div>
-        </fieldset>
-        <label>Instagram <span class="hint">shared only when you both opt in</span>
-          <input name="instagram" placeholder="@handle" />
-        </label>
-        <div id="questions"></div>
-        <button type="submit" class="primary">Submit &amp; get my report</button>
+  <!-- ===== Landing / Auth ===== -->
+  <section id="view-landing" class="view active">
+    <div class="hero">
+      <div class="frame"><div class="eye">👁️</div></div>
+      <h1 class="hero-title">STUDY OF <b>US</b></h1>
+      <div class="hero-circles"><span class="circle red">read others</span><span class="circle blue">get read</span></div>
+      <p class="hero-tag">Self discovery, through the eyes of others, with lots of data.</p>
+    </div>
+    <div class="auth-card">
+      <div id="google-wrap" hidden><a class="google-btn" href="/auth/google">Sign in with Google</a><div class="or">or</div></div>
+      <div class="tabs-auth"><button id="tab-login" class="active">Log in</button><button id="tab-signup">Create account</button></div>
+      <form id="auth-form">
+        <label>Email <input name="email" type="email" required autocomplete="email" /></label>
+        <label>Password <input name="password" type="password" required minlength="6" autocomplete="current-password" /></label>
+        <p class="auth-err" id="auth-err" hidden></p>
+        <button type="submit" class="primary" id="auth-submit">Log in</button>
       </form>
-    </section>
+    </div>
+  </section>
 
-    <!-- Matchup / voting -->
-    <section id="view-matchup" class="view">
-      <h2>Who's more attractive?</h2>
-      <p class="sub">The photos you choose teach us your type. Every 3 votes earns a credit.</p>
-      <div id="matchup" class="matchup"></div>
-      <p class="empty" id="matchup-empty" hidden>Not enough profiles yet — create a couple.</p>
-    </section>
+  <!-- ===== App shell (signed in) ===== -->
+  <div id="app" hidden>
+    <header>
+      <div class="brand">Study<b>of</b>us <em>BETA</em></div>
+      <div class="head-right"><span class="creds"><span id="credits">0</span> ✦</span><a id="signout" class="signout">sign out</a></div>
+    </header>
 
-    <!-- Report -->
-    <section id="view-report" class="view">
-      <h2>Your report</h2>
-      <div id="report"></div>
-    </section>
-
-    <!-- Matches + messaging -->
-    <section id="view-matches" class="view">
-      <h2>Matches</h2>
-      <p class="sub">You match when you've both rated each other over other people. A match unlocks messaging.</p>
-      <div id="matches-list" class="cards"></div>
-      <div id="chat" hidden>
-        <button class="ghost" id="chat-back" style="margin-bottom:12px">← back to matches</button>
-        <div id="chat-header"></div>
-        <div id="chat-log" class="chat-log"></div>
-        <form id="chat-form" class="chat-form">
-          <input id="chat-input" placeholder="Say something…" maxlength="1000" autocomplete="off" />
-          <button class="primary" type="submit">Send</button>
+    <main>
+      <!-- Onboarding -->
+      <section id="view-onboard" class="view">
+        <h2>Set up your profile</h2>
+        <p class="sub">Add a photo and answer honestly. Answers stay private — they power your report and matches.</p>
+        <form id="onboard-form">
+          <label>Display name <input name="name" required maxlength="80" /></label>
+          <label>Photo URL <span class="hint">optional — an avatar is used otherwise</span><input name="photo" placeholder="https://…" /></label>
+          <div class="row3">
+            <label>Age <input name="age" type="number" min="18" max="99" /></label>
+            <label>Gender<select name="gender"><option value="woman">woman</option><option value="man">man</option><option value="nonbinary">nonbinary</option></select></label>
+            <label>Orientation<select name="orientation"><option value="straight">straight</option><option value="gay">gay</option><option value="lesbian">lesbian</option><option value="bi">bi</option></select></label>
+          </div>
+          <fieldset><legend>Mental health <span class="hint">optional, private</span></legend><div id="mh" class="opts"></div></fieldset>
+          <label>Instagram <span class="hint">shared only with a mutual match</span><input name="instagram" placeholder="@handle" /></label>
+          <div id="questions"></div>
+          <button type="submit" class="primary">Save &amp; continue</button>
         </form>
-      </div>
-    </section>
+      </section>
 
-    <!-- Guessing games -->
-    <section id="view-games" class="view">
-      <h2>Guessing games</h2>
-      <p class="sub">How well can you read people? 2 of 3 correct earns a credit.</p>
-      <div id="game-pick" class="cards"></div>
-      <div id="game-play"></div>
-    </section>
-  </main>
+      <!-- Home -->
+      <section id="view-home" class="view">
+        <div class="card">
+          <h2>What's your type?</h2>
+          <p class="sub">Rate photos and get an analysis of who you find attractive. Voting earns credits, too.</p>
+          <div class="btn-row"><button class="primary" data-rate="man">Rate men</button><button class="primary" data-rate="woman">Rate women</button></div>
+        </div>
+        <div class="card" id="manage-photos"></div>
+        <div class="card">
+          <h2>Your report</h2>
+          <p class="sub">See how attractive you're rated and the type of person into you.</p>
+          <button class="outline" data-view="report">View report →</button>
+        </div>
+        <div class="card">
+          <h2>Matches <span id="match-badge" class="badge" hidden>0</span></h2>
+          <p class="sub">You match when you've both rated each other over others. Socials unlock on a match.</p>
+          <button class="outline" data-view="matches">View matches →</button>
+        </div>
+        <div class="card">
+          <h2>Earn credits — Guessing games <span class="hint">→</span></h2>
+          <p class="sub">How well can you read people? Every 2 of 3 correct earns a credit.</p>
+          <div id="game-grid" class="game-grid"></div>
+        </div>
+        <div class="card muted"><h2>Buy credits</h2><p class="sub">Don't wanna wait? Credits get you more data, faster.</p><button class="primary" disabled>See credit packs</button></div>
+        <div class="card muted"><h2>Refer a friend</h2><p class="sub">Earn 15 ✦ when someone signs up with your link.</p></div>
+      </section>
 
-  <nav class="tabs">
-    <button data-view="matchup">Rate</button>
-    <button data-view="games">Guess</button>
-    <button data-view="report" id="tab-report" disabled>Report</button>
-    <button data-view="matches" id="tab-matches" disabled>Matches</button>
-    <button data-view="onboard">Profile</button>
-  </nav>
+      <!-- Matchup -->
+      <section id="view-matchup" class="view">
+        <button class="back" data-view="home">← home</button>
+        <h2>Who's more attractive?</h2>
+        <p class="sub">The photos you choose teach us your type. Every 3 votes earns a credit.</p>
+        <div id="matchup" class="matchup"></div>
+        <p class="empty" id="matchup-empty" hidden>Not enough profiles for that filter yet.</p>
+      </section>
+
+      <!-- Report -->
+      <section id="view-report" class="view">
+        <button class="back" data-view="home">← home</button>
+        <h2>Your report</h2>
+        <div id="report"></div>
+      </section>
+
+      <!-- Matches -->
+      <section id="view-matches" class="view">
+        <button class="back" data-view="home">← home</button>
+        <h2>Matches</h2>
+        <p class="sub">You both rated each other over other people. Their socials are revealed below.</p>
+        <div id="matches-list" class="cards"></div>
+      </section>
+
+      <!-- Guessing game play -->
+      <section id="view-games" class="view">
+        <button class="back" data-view="home">← home</button>
+        <h2 id="game-title">Guessing game</h2>
+        <div id="game-play"></div>
+      </section>
+    </main>
+
+    <nav class="tabs">
+      <button data-view="home" class="active">Home</button>
+      <button data-view="matchup">Rate</button>
+      <button data-view="report">Report</button>
+      <button data-view="matches">Matches</button>
+    </nav>
+  </div>
 
   <script src="app.js"></script>
 </body>
