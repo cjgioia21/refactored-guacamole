@@ -286,7 +286,8 @@ async function loadMatchup() {
   $("#matchup-empty").hidden = true;
   $("#matchup").innerHTML = [body.a, body.b].map((u) => `<div class="vs-card">${avatar(u)}
       <h3>${esc(u.name)}${u.age ? ", " + u.age : ""}</h3>
-      <button class="pick" data-win="${u.id}" data-lose="${u.id === body.a.id ? body.b.id : body.a.id}">choose</button></div>`).join("");
+      <button class="pick" data-win="${u.id}" data-lose="${u.id === body.a.id ? body.b.id : body.a.id}">choose</button></div>`).join("")
+    + `<span class="vs-badge">VS</span>`;
   $("#matchup").querySelectorAll(".pick").forEach((btn) => btn.addEventListener("click", async () => {
     const before = me.profile.votesCast || 0;
     const { body: res } = await post("/api/vote", { winnerId: btn.dataset.win, loserId: btn.dataset.lose });
@@ -294,6 +295,31 @@ async function loadMatchup() {
     if (res?.votesCast != null) { me.profile.votesCast = res.votesCast; announceTasteUnlock(before, res.votesCast); }
     loadMatchup();
   }));
+  renderRateExtras();
+}
+
+// The live "Your type" panel + personal ranking shown under the rating pair.
+async function renderRateExtras() {
+  const genderWord = rateGender === "man" ? "men" : rateGender === "woman" ? "women" : "people";
+  const r = (await api("/api/report")).body;
+  if (r?.taste) {
+    const next = r.taste.find((t) => !t.unlocked);
+    $("#rate-taste").innerHTML = `<div class="section-title">🧬 Your type in ${genderWord} <span class="hint">— firms up as you rate</span></div>
+      <div class="meta" style="margin:0 0 8px 2px">${r.votesCast} pairs rated${next ? ` · next unlock at ${next.unlockAt}` : " · all unlocked ✓"}</div>
+      ${tasteSection(r.taste).replace(/^<div class="section-title">[^<]*<[^>]*>[^<]*<\/span><\/div>/, "")}`;
+  }
+  const rk = (await api("/api/my-ranking")).body;
+  if (rk) renderRanking(rk, genderWord);
+}
+function renderRanking(rk, genderWord) {
+  const el = $("#rate-ranking");
+  if (!rk.ranking.length) { el.innerHTML = `<div class="section-title">🏆 Your ranking</div><p class="meta" style="margin:0 2px">Pick a few and your personal ranking of ${esc(genderWord)} builds here.</p>`; return; }
+  const medal = (i) => (i === 0 ? "🥇" : i === 1 ? "🥈" : i === 2 ? "🥉" : "");
+  const cards = rk.ranking.map((row, i) => `<div class="rank-card">
+      <span class="rank-no">#${i + 1} ${medal(i)}</span>${avatar(row.user)}
+    </div>`).join("");
+  el.innerHTML = `<div class="section-title">🏆 Your ranking <span class="hint">— from your ${rk.votesCast} votes</span></div>
+    <div class="rank-grid">${cards}</div>`;
 }
 // Show progress toward the next taste-card unlock.
 function renderTasteProgress() {

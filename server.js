@@ -157,6 +157,20 @@ app.post("/api/vote", requireProfile, (req, res) => {
   res.json({ ok: true, creditEarned, credits: req.profile.credits, votesCast: req.profile.votesCast });
 });
 
+// Your personal ranking of everyone you've rated (by how often you picked them).
+app.get("/api/my-ranking", requireProfile, (req, res) => {
+  const r = req.profile.ratings || {};
+  const ranked = store.all()
+    .filter((u) => u.id !== req.profile.id && r[u.id])
+    .map((u) => {
+      const { w, l } = r[u.id];
+      return { user: store.publicView(u), w, l, score: w - l, rate: w + l ? w / (w + l) : 0 };
+    })
+    .sort((a, b) => b.score - a.score || b.rate - a.rate)
+    .slice(0, 30);
+  res.json({ ranking: ranked, votesCast: req.profile.votesCast || 0 });
+});
+
 // ---------- Report & matches ----------
 // "How people see this photo": attractiveness band, per-game guess reveals,
 // and the gated "Who Likes You?" demographic report.

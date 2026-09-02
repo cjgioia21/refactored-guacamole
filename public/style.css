@@ -167,7 +167,8 @@ input[type=range] { width: 100%; accent-color: var(--accent); height: 26px; }
 .taste-progress { color: var(--muted); font-size: 13px; text-align: center; margin: 10px 0 0; }
 
 /* ---------- matchup ---------- */
-.matchup { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
+.matchup { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; position: relative; }
+.vs-badge { position: absolute; left: 50%; top: 42%; transform: translate(-50%, -50%); width: 46px; height: 46px; border-radius: 50%; background: var(--accent); color: #fff; display: flex; align-items: center; justify-content: center; font-weight: 800; font-size: 15px; box-shadow: 0 3px 12px rgba(0,0,0,.3); z-index: 3; border: 3px solid #fff; }
 .vs-card { background: var(--card); border: 1px solid var(--line); border-radius: 16px; overflow: hidden; text-align: center; }
 .vs-card img, .avatar { width: 100%; aspect-ratio: 3/4; object-fit: cover; display: block; background: #dfe4f0; }
 .avatar { display: flex; align-items: center; justify-content: center; font-size: 64px; color: #8a93ad; }
@@ -259,4 +260,32 @@ nav.tabs { position: fixed; bottom: 0; left: 0; right: 0; display: flex; backgro
 nav.tabs button { flex: 1; border: 0; border-radius: 0; background: transparent; color: var(--muted); padding: 14px 0; font-size: 14px; }
 nav.tabs button.active { color: var(--accent); font-weight: bold; }
 .empty { color: var(--muted); text-align: center; padding: 30px; }
+
+/* ---------- personal ranking grid ---------- */
+.rank-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; }
+.rank-card { position: relative; }
+.rank-card img, .rank-card .avatar { width: 100%; aspect-ratio: 3/4; object-fit: cover; border-radius: 12px; }
+.rank-no { position: absolute; top: 6px; left: 6px; background: rgba(0,0,0,.7); color: #fff; font-weight: 700; font-size: 13px; padding: 2px 8px; border-radius: 999px; z-index: 2; }
+
+/* ---------- desktop / computer layout ---------- */
+@media (min-width: 900px) {
+  main { max-width: 1000px; padding: 26px 24px 110px; }
+  h2 { font-size: 28px; }
+  /* Home cards in two columns; the games card spans both. */
+  #view-home { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; align-items: start; }
+  #view-home > .card { margin-bottom: 0; }
+  #view-home > .card:nth-child(5) { grid-column: 1 / -1; } /* guessing games */
+  #view-home .game-grid { grid-template-columns: repeat(3, 1fr); }
+  /* Bigger rating pair with a proper VS badge. */
+  #view-matchup, #view-report, #view-matches, #view-games, #view-buy { max-width: 720px; margin: 0 auto; }
+  .matchup, .versus { gap: 22px; }
+  .vs-badge { width: 56px; height: 56px; font-size: 17px; }
+  .rank-grid { grid-template-columns: repeat(4, 1fr); }
+  .cards { grid-template-columns: repeat(3, 1fr); }
+  /* Bottom nav becomes a centered floating dock. */
+  nav.tabs { left: 50%; right: auto; transform: translateX(-50%); bottom: 16px; max-width: 520px; width: 92%; border: 1px solid var(--line); border-radius: 16px; box-shadow: 0 10px 40px rgba(20,30,70,.18); }
+  .hero { border-radius: 0; padding: 60px 20px 72px; }
+  .hero-title { font-size: 64px; }
+  .frame { width: 240px; height: 290px; }
+}
 [hidden] { display: none !important; }

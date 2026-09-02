@@ -48,9 +48,13 @@ without taking payment; wire a real processor (Stripe, etc.) for live billing.
 ```bash
 npm install
 npm run seed       # demo profiles + matchups + a demo login (see below)
-npm start          # http://localhost:3000
+npm start          # http://localhost:3000  — open in a browser
 npm test           # engine + auth + server tests
 ```
+
+The UI is responsive: a mobile layout on phones and a wider **desktop layout**
+(two-column home, large VS rating pair, floating nav dock, a live "Your type"
+panel and personal ranking grid under the rating pair) on computer screens.
 
 `npm run seed` also creates a ready-to-explore login: **demo@truehumannature.com /
 hunter2** (already rated, with credits and revealable data).

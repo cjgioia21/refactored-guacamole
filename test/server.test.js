@@ -138,6 +138,23 @@ test("buying a credit pack grants credits", async () => {
   assert.equal((await a("POST", "/api/buy-credits", { packId: "nope" })).status, 400);
 });
 
+test("my-ranking orders profiles by how often you picked them", async () => {
+  const a = client();
+  await a("POST", "/auth/signup", { email: "rank@ex.com", password: "hunter2" });
+  await a("POST", "/api/profile", { name: "Ren", gender: "man", answers: {} });
+  const b = client(), c = client();
+  await b("POST", "/auth/signup", { email: "rb@ex.com", password: "hunter2" });
+  await c("POST", "/auth/signup", { email: "rc@ex.com", password: "hunter2" });
+  const pb = (await b("POST", "/api/profile", { name: "B", gender: "woman", answers: {} })).body;
+  const pc = (await c("POST", "/api/profile", { name: "C", gender: "woman", answers: {} })).body;
+  // a picks B over C twice -> B should rank above C
+  await a("POST", "/api/vote", { winnerId: pb.id, loserId: pc.id });
+  await a("POST", "/api/vote", { winnerId: pb.id, loserId: pc.id });
+  const rk = (await a("GET", "/api/my-ranking")).body;
+  assert.equal(rk.ranking[0].user.id, pb.id);
+  assert.ok(rk.ranking[0].score >= rk.ranking[rk.ranking.length - 1].score);
+});
+
 test("versus comparison: scores the higher trait and records guesses", async () => {
   const a = client();
   await a("POST", "/auth/signup", { email: "vs@ex.com", password: "hunter2" });
@@ -153,12 +170,13 @@ test("versus comparison: scores the higher trait and records guesses", async () 
   assert.equal(grab.status, 200);
   assert.ok(grab.body.a && grab.body.b && grab.body.a.id !== grab.body.b.id);
 
-  // Picking the actually-more-right profile is correct.
-  const rightIsA = grab.body.a.id === pr.id;
-  const res = await a("POST", "/api/versus-guess", { axis: "pol", aId: grab.body.a.id, bId: grab.body.b.id, pick: rightIsA ? "a" : "b" });
-  assert.equal(res.body.correct, true);
+  // Score a known pair deterministically: R is more right than L.
+  const hit = await a("POST", "/api/versus-guess", { axis: "pol", aId: pr.id, bId: pl.id, pick: "a" });
+  assert.equal(hit.body.correct, true);
+  const miss = await a("POST", "/api/versus-guess", { axis: "pol", aId: pr.id, bId: pl.id, pick: "b" });
+  assert.equal(miss.body.correct, false);
   const stats = (await a("GET", "/api/guess-stats")).body;
-  assert.ok(stats.pol.total >= 1 && stats.pol.correct >= 1);
+  assert.ok(stats.pol.total >= 2 && stats.pol.correct >= 1);
 });
 
 test("guessing updates accuracy stats", async () => {
