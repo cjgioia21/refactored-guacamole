@@ -139,6 +139,18 @@ input[type=range] { width: 100%; accent-color: var(--accent); height: 26px; }
 .checks { display: flex; flex-direction: column; gap: 14px; }
 #submit-face { width: 100%; font-size: 17px; padding: 16px; }
 
+/* ---------- shareable "true nature" card ---------- */
+.true-nature { background: linear-gradient(150deg, #1e2a5a, #3a1d5a 60%, #7a1d3a); color: #fff; border: 0; position: relative; overflow: hidden; }
+.true-nature .tn-tag { font-size: 12px; letter-spacing: 2px; font-weight: 700; opacity: .8; }
+.true-nature .tn-head { display: flex; gap: 14px; align-items: center; margin: 10px 0 14px; }
+.true-nature .tn-ph { width: 84px; height: 112px; flex: 0 0 84px; object-fit: cover; border-radius: 12px; }
+.true-nature .tn-type { font-size: 20px; font-weight: 700; line-height: 1.25; }
+.true-nature .tn-type b { color: #ffd36b; }
+.true-nature .tn-looks { margin-top: 8px; font-size: 15px; opacity: .95; }
+.true-nature .tn-jab { margin-top: 6px; font-size: 15px; color: #ff9db0; font-weight: 700; }
+.true-nature .tn-share { width: 100%; background: rgba(255,255,255,.16); border: 1px solid rgba(255,255,255,.5); color: #fff; border-radius: 12px; padding: 13px; font-weight: 700; font-size: 15px; }
+.true-nature .tn-foot { text-align: center; font-size: 12px; opacity: .7; margin-top: 10px; }
+
 /* ---------- your taste ---------- */
 .taste-card .taste-title { font-size: 18px; font-weight: 700; margin-bottom: 4px; }
 .taste-card .taste-line { color: #3b4260; font-size: 15px; line-height: 1.5; }

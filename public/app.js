@@ -356,8 +356,9 @@ async function loadReport() {
     </div>
     <label class="email-pref" style="margin-top:14px"><input type="checkbox" id="email-pref" ${r.emailOnNewData ? "checked" : ""}/> email me when new data is available</label>`;
 
-  $("#report").innerHTML = attract + tasteSection(r.taste) + guesses + fans + extra;
+  $("#report").innerHTML = trueNatureCard(r, p) + attract + tasteSection(r.taste) + guesses + fans + extra;
 
+  $("#tn-share")?.addEventListener("click", () => shareTrueNature(r));
   $("#go-matches")?.addEventListener("click", () => show("matches"));
   $("#buy-pairs")?.addEventListener("click", () => spendAction("/api/buy-pairs", {}));
   $("#report").querySelectorAll("[data-reveal]").forEach((b) => b.addEventListener("click", () => spendAction("/api/reveal", { game: b.dataset.reveal })));
@@ -400,6 +401,52 @@ async function spendAction(url, body) {
   if (status === 402) { alert("Not enough credits — rate more photos or play games to earn them."); return; }
   if (res?.credits != null) { setCredits(res.credits); me.profile.credits = res.credits; }
   loadReport();
+}
+
+// ================= Shareable "True Nature" card =================
+function tasteBlurb(taste = []) {
+  const on = taste.filter((t) => t.unlocked);
+  if (!on.length) return null;
+  const g = on[0].gender;
+  const poles = on.map((t) => t.pole.replace(/-/g, " ")).slice(0, 4).join(", ");
+  return { poles, gender: g };
+}
+function trueNatureVerdict(r) {
+  const a = r.attractiveness;
+  const t = tasteBlurb(r.taste);
+  const looks = a.percentile >= 50
+    ? `Strangers rate you hotter than ${a.percentile}% of people.`
+    : `Strangers rate you below ${100 - a.percentile}% of people.`;
+  const type = t ? `You go for <b>${esc(t.poles)} ${esc(t.gender)}</b>.` : `Rate more people to expose your type.`;
+  let jab = "";
+  if (r.prediction != null) {
+    const gap = r.prediction - a.percentile;
+    if (gap >= 15) jab = `You guessed ${r.prediction}%. Bit of an ego. 💀`;
+    else if (gap <= -15) jab = `You guessed ${r.prediction}% — you're hotter than you think.`;
+  }
+  return { looks, type, jab };
+}
+function trueNatureCard(r, p) {
+  const v = trueNatureVerdict(r);
+  return `<div class="card true-nature">
+    <div class="tn-tag">YOUR TRUE NATURE</div>
+    <div class="tn-head">${avatar(p, "tn-ph")}<div>
+      <div class="tn-type">${v.type}</div>
+      <div class="tn-looks">${esc(v.looks)}</div>
+      ${v.jab ? `<div class="tn-jab">${v.jab}</div>` : ""}
+    </div></div>
+    <button class="tn-share" id="tn-share">📸 copy my card to share</button>
+    <div class="tn-foot">truehumannature.com · nobody's watching. be honest.</div>
+  </div>`;
+}
+async function shareTrueNature(r) {
+  const v = trueNatureVerdict(r);
+  const strip = (s) => s.replace(/<[^>]+>/g, "");
+  const text = `MY TRUE NATURE (truehumannature.com)\n${strip(v.type)}\n${v.looks}${v.jab ? "\n" + strip(v.jab) : ""}`;
+  try {
+    if (navigator.share) await navigator.share({ text });
+    else { await navigator.clipboard.writeText(text); toast("Copied — go expose yourself 😈"); }
+  } catch { try { await navigator.clipboard.writeText(text); toast("Copied to clipboard"); } catch { toast("Couldn't copy"); } }
 }
 
 // ================= Your taste (from rating) =================
