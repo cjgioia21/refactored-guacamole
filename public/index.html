@@ -83,8 +83,10 @@
           <p class="sub">How well can you read people? Only a flawless 3/3 earns a credit.</p>
           <div id="game-grid" class="game-grid"></div>
         </div>
-        <div class="card muted"><h2>Buy credits</h2><p class="sub">Don't wanna wait? Credits get you more data, faster.</p><button class="primary" disabled>See credit packs</button></div>
-        <div class="card muted"><h2>Refer a friend</h2><p class="sub">Earn 15 ✦ when someone signs up with your link.</p></div>
+        <div class="card"><h2>Buy credits</h2><p class="sub">Don't wanna wait? Credits get you more data, faster.</p><button class="primary" data-view="buy">See credit packs</button></div>
+        <div class="card"><h2>Refer a friend</h2><p class="sub">Earn 15 ✦ when someone signs up with your link and rates 200 pairs.</p>
+          <div class="refer-row"><input id="refer-link" readonly /><button class="outline" id="refer-copy">copy</button></div>
+        </div>
       </section>
 
       <!-- Matchup -->
@@ -110,6 +112,17 @@
         <h2>Matches</h2>
         <p class="sub">You both rated each other over other people. Their socials are revealed below.</p>
         <div id="matches-list" class="cards"></div>
+      </section>
+
+      <!-- Buy credits -->
+      <section id="view-buy" class="view">
+        <button class="back" data-view="home">← home</button>
+        <h2>Buy credits</h2>
+        <p class="sub">Credits are the site currency — spend them on photo reports, extra matchup pairs, and reveals. You also earn them free by <b>rating</b> and <b>playing rounds</b>.</p>
+        <div class="card"><h2 style="font-size:20px;margin:0 0 4px">Your balance</h2><div class="balance"><span id="balance">0</span> ✦</div></div>
+        <div class="section-title">One-time</div>
+        <div id="packs"></div>
+        <p class="privacy-note">Demo checkout — no real payment is taken; the credits are granted instantly. Wire a payment processor for live billing.</p>
       </section>
 
       <!-- Guessing game play -->

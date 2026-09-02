@@ -106,6 +106,20 @@ test("credit economy: reveal costs credits and gates on data", async () => {
   assert.equal(unlock.status, 402);
 });
 
+test("buying a credit pack grants credits", async () => {
+  const a = client();
+  await a("POST", "/auth/signup", { email: "buy@ex.com", password: "hunter2" });
+  await a("POST", "/api/profile", { name: "Bea", gender: "woman", answers: {} });
+  const packs = (await a("GET", "/api/credit-packs")).body.packs;
+  assert.ok(packs.length >= 3);
+  const before = (await a("GET", "/api/report")).body.credits;
+  const buy = await a("POST", "/api/buy-credits", { packId: "popular" });
+  assert.equal(buy.status, 200);
+  assert.equal(buy.body.added, 300);
+  assert.equal(buy.body.credits, before + 300);
+  assert.equal((await a("POST", "/api/buy-credits", { packId: "nope" })).status, 400);
+});
+
 test("guessing updates accuracy stats", async () => {
   const a = client();
   await a("POST", "/auth/signup", { email: "g@ex.com", password: "hunter2" });

@@ -36,6 +36,10 @@ Credits are deliberately **hard to earn** — you get them by rating other peopl
 | Buy more pairs | 75✦ | +200 prioritized matchup appearances (more data, faster) |
 | Unlock "Who Likes You?" | 300✦ | the full demographic report on your fans |
 
+…or **buy** credits outright on the Buy Credits page: $15→100✦, $40→300✦
+(most popular), $100→1,000✦. The checkout is a **demo** — it grants credits
+without taking payment; wire a real processor (Stripe, etc.) for live billing.
+
 ## Run
 
 ```bash
@@ -106,6 +110,8 @@ Demographics (age, gender, orientation, mental health) are structured fields.
 | POST   | `/api/buy-pairs`             | spend 75✦ for +200 prioritized matchups        |
 | POST   | `/api/unlock-fans`           | spend 300✦ to unlock the demographic report    |
 | POST   | `/api/email-pref`            | `{on}` — email me when new data arrives        |
+| GET    | `/api/credit-packs`          | purchasable credit packs                       |
+| POST   | `/api/buy-credits`           | `{packId}` — demo checkout, grants credits     |
 
 Actions that mutate a user require a session; unauthenticated calls get 401.
 Profiles persist to `data/users.json`, accounts to `data/accounts.json`, and the

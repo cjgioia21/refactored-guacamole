@@ -47,6 +47,7 @@ function show(view) {
   if (view === "home") loadHome();
   if (view === "report") loadReport();
   if (view === "matches") loadMatches();
+  if (view === "buy") loadBuy();
   window.scrollTo(0, 0);
 }
 
@@ -125,7 +126,35 @@ async function loadHome() {
   const matches = (await api("/api/matches")).body || [];
   const badge = $("#match-badge");
   badge.textContent = matches.length; badge.hidden = matches.length === 0;
+  // referral link
+  const link = `${location.origin}/?ref=${me.account?.id?.slice(0, 8) || ""}`;
+  $("#refer-link").value = link;
+  $("#refer-copy").onclick = () => { navigator.clipboard?.writeText(link); $("#refer-copy").textContent = "copied ✓"; };
   renderGameGrid();
+}
+
+// ================= Buy credits =================
+async function loadBuy() {
+  $("#balance").textContent = me.profile?.credits ?? 0;
+  const { packs } = (await api("/api/credit-packs")).body;
+  $("#packs").innerHTML = packs.map((p) => `<div class="pack ${p.popular ? "popular" : ""}">
+    ${p.popular ? `<div class="tag-popular">MOST POPULAR</div>` : ""}
+    <div class="price">$${p.price}</div>
+    <div class="amount">${p.credits.toLocaleString()} ✦${p.badge ? `<span class="save">${esc(p.badge)}</span>` : ""}</div>
+    <div class="eq">Equivalent to ${esc(p.ratingsEq)}</div>
+    <button class="buy" data-pack="${p.id}">Buy</button>
+  </div>`).join("");
+  $("#packs").querySelectorAll("[data-pack]").forEach((b) => b.addEventListener("click", async () => {
+    b.disabled = true;
+    const { body } = await post("/api/buy-credits", { packId: b.dataset.pack });
+    if (body?.credits != null) {
+      setCredits(body.credits);
+      me.profile.credits = body.credits;
+      $("#balance").textContent = body.credits;
+      b.textContent = `+${body.added} ✦ added`;
+      setTimeout(() => { b.textContent = "Buy"; b.disabled = false; }, 1400);
+    } else b.disabled = false;
+  }));
 }
 
 // ================= Game grid (with accuracy) =================

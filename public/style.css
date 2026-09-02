@@ -151,6 +151,20 @@ button:disabled { opacity: .45; cursor: default; }
 .email-pref { display: flex; align-items: center; gap: 10px; color: var(--muted); }
 .email-pref input { width: 18px; height: 18px; }
 .privacy-note { color: var(--muted); font-size: 13px; text-align: center; margin: 18px 6px 0; line-height: 1.5; }
+/* ---------- buy credits ---------- */
+.balance { font-size: 34px; font-weight: 800; color: var(--accent); }
+.pack { background: var(--card); border: 1px solid var(--line); border-radius: 16px; padding: 22px; margin-bottom: 14px; position: relative; }
+.pack.popular { border: 2px solid var(--accent); }
+.pack .price { font-size: 34px; font-weight: 800; }
+.pack .amount { color: var(--muted); font-size: 16px; margin: 4px 0 2px; }
+.pack .amount .save { color: var(--good); border: 1px solid var(--good); border-radius: 999px; padding: 1px 9px; font-size: 12px; font-weight: 700; margin-left: 8px; }
+.pack .eq { color: var(--muted); font-size: 14px; margin-bottom: 14px; }
+.pack .buy { width: 100%; }
+.pack.popular .buy { background: var(--accent); color: #fff; }
+.pack:not(.popular) .buy { background: #fff; color: var(--accent); border: 1px solid var(--accent); }
+.pack .tag-popular { position: absolute; top: -12px; left: 50%; transform: translateX(-50%); background: var(--accent); color: #fff; font-size: 12px; font-weight: 700; letter-spacing: 1px; padding: 4px 14px; border-radius: 999px; }
+.refer-row { display: flex; gap: 8px; margin-top: 10px; }
+.refer-row input { flex: 1; font-size: 13px; color: var(--muted); font-family: ui-monospace, Menlo, monospace; }
 nav.tabs { position: fixed; bottom: 0; left: 0; right: 0; display: flex; background: var(--card); border-top: 1px solid var(--line); max-width: 720px; margin: 0 auto; }
 nav.tabs button { flex: 1; border: 0; border-radius: 0; background: transparent; color: var(--muted); padding: 14px 0; font-size: 14px; }
 nav.tabs button.active { color: var(--accent); font-weight: bold; }

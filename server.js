@@ -14,6 +14,12 @@ import {
 // Credit economy
 const COST = { reveal: 30, pairs: 75, fans: 300 };
 const PAIRS_AMOUNT = 200;
+// Purchasable credit packs (mirrors the site's one-time packs).
+const CREDIT_PACKS = [
+  { id: "starter", price: 15, credits: 100, ratingsEq: "1–4 ratings" },
+  { id: "popular", price: 40, credits: 300, ratingsEq: "4–12 ratings", badge: "SAVE 11%", popular: true },
+  { id: "big", price: 100, credits: 1000, ratingsEq: "13–40 ratings", badge: "SAVE 33%" },
+];
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const app = express();
@@ -268,6 +274,18 @@ app.post("/api/buy-pairs", requireProfile, (req, res) => {
 app.post("/api/email-pref", requireProfile, (req, res) => {
   store.setEmailPref(req.profile.id, req.body?.on);
   res.json({ ok: true, emailOnNewData: req.profile.emailOnNewData });
+});
+
+// ---------- Buy credits ----------
+app.get("/api/credit-packs", (_req, res) => res.json({ packs: CREDIT_PACKS }));
+
+// Purchase a pack. NOTE: demo checkout — no real payment processor is wired,
+// so this simply grants the credits. Swap in Stripe/etc. for real billing.
+app.post("/api/buy-credits", requireProfile, (req, res) => {
+  const pack = CREDIT_PACKS.find((p) => p.id === req.body?.packId);
+  if (!pack) return res.status(400).json({ error: "unknown pack" });
+  store.addCredits(req.profile.id, pack.credits);
+  res.json({ ok: true, demo: true, added: pack.credits, credits: req.profile.credits });
 });
 
 // Weighted pick: profiles with unspent purchased priority appear more often.
