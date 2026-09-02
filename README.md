@@ -85,8 +85,10 @@ server derives who you are from the session cookie, never from the client.
   `guessConsensus` (per-game reveal), and `fansReport` (demographics of your fans,
   incl. mental-health overrepresentation vs. the population baseline).
 
-`src/questions.js` maps ~30 self-report questions onto 10 trait axes.
-Demographics (age, gender, orientation, mental health) are structured fields.
+`src/questions.js` maps **60 self-report questions — 12 per quiz** onto the five
+guessing-game axes (bodycount, net worth, politics, dominance, gooner nature), so
+each trait score is measured deeply enough to be accurate. Demographics (age,
+gender, orientation, mental health) are structured fields collected separately.
 
 ## API
 

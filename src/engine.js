@@ -260,11 +260,11 @@ export function guessOutcome(target, axis, guess) {
 // ---------- Guessing "games" catalogue (what strangers guess about a photo) ----------
 // Each game guesses one trait axis; poles are flavored display labels.
 export const GAMES = [
-  { key: "bodycount", label: "Bodycount", emoji: "🍑", axis: "adv", poles: ["low bodycount", "high bodycount"] },
-  { key: "networth", label: "Net worth", emoji: "💰", axis: "amb", poles: ["lower income", "higher income"] },
+  { key: "bodycount", label: "Bodycount", emoji: "🍑", axis: "bodycount", poles: ["low bodycount", "high bodycount"] },
+  { key: "networth", label: "Net worth", emoji: "💰", axis: "networth", poles: ["lower income", "higher income"] },
   { key: "politics", label: "Politics", emoji: "🗳️", axis: "pol", poles: ["left", "right"] },
   { key: "dominance", label: "Dominance", emoji: "⛓️", axis: "dom", poles: ["submissive", "dominant"] },
-  { key: "gooner", label: "Gooner Nature", emoji: "💦", axis: "risk", poles: ["tame", "gooner"] },
+  { key: "gooner", label: "Gooner Nature", emoji: "💦", axis: "gooner", poles: ["tame", "gooner"] },
 ];
 export const gameByKey = (k) => GAMES.find((g) => g.key === k) || null;
 

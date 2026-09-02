@@ -101,6 +101,9 @@ button:disabled { opacity: .45; cursor: default; }
 .meta { color: var(--muted); font-size: 13px; }
 
 .q { background: #fafbfe; border: 1px solid var(--line); border-radius: 14px; padding: 14px; margin-bottom: 10px; }
+.quiz-head { font-size: 15px; font-weight: 700; text-transform: uppercase; letter-spacing: 1px; color: var(--accent); margin: 22px 2px 10px; padding-bottom: 6px; border-bottom: 2px solid var(--line); }
+.quiz-head .hint { text-transform: none; letter-spacing: 0; }
+.q-num { color: var(--muted); font-weight: 700; }
 .q .cat { font-size: 11px; text-transform: uppercase; letter-spacing: 1px; color: var(--accent); }
 .q p { margin: 4px 0 10px; font-weight: bold; }
 .opts { display: flex; flex-wrap: wrap; gap: 8px; }

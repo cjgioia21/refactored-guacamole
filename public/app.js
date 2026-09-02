@@ -92,9 +92,14 @@ async function buildForms() {
     else { selectedMH.has(f) ? selectedMH.delete(f) : selectedMH.add(f); el.classList.toggle("sel"); }
   }));
   const { questions } = (await api("/api/questions")).body;
-  $("#questions").innerHTML = questions.map((q) => `<div class="q" data-qid="${q.id}">
-      <div class="cat">${esc(q.category)}</div><p>${esc(q.prompt)}</p>
-      <div class="opts">${q.options.map((o, i) => `<span class="opt" data-i="${i}">${esc(o.label)}</span>`).join("")}</div></div>`).join("");
+  let lastCat = null;
+  $("#questions").innerHTML = questions.map((q, n) => {
+    const header = q.category !== lastCat ? `<div class="quiz-head">${esc(q.category)} <span class="hint">quiz</span></div>` : "";
+    lastCat = q.category;
+    return `${header}<div class="q" data-qid="${q.id}">
+      <p><span class="q-num">${n + 1}.</span> ${esc(q.prompt)}</p>
+      <div class="opts">${q.options.map((o, i) => `<span class="opt" data-i="${i}">${esc(o.label)}</span>`).join("")}</div></div>`;
+  }).join("");
   $("#questions").querySelectorAll(".q").forEach((q) => q.querySelectorAll(".opt").forEach((opt) =>
     opt.addEventListener("click", () => { q.querySelectorAll(".opt").forEach((o) => o.classList.remove("sel")); opt.classList.add("sel"); q.dataset.answer = opt.dataset.i; })));
 }
@@ -248,9 +253,9 @@ function lockedFansCard(f, credits) {
     <div class="section-title" style="color:#fff;margin-top:0">💘 Who Likes You?</div>
     <p>A full demographic report on the people who pick your photo. We compare everyone who picks you against everyone who passes:</p>
     <ul>
-      <li>their politics, religion, and beliefs</li>
+      <li>their politics, income, and dominance</li>
       <li>mental health — which diagnoses are overrepresented among your fans</li>
-      <li>their gender, age, and personality lean</li>
+      <li>their bodycount &amp; gooner lean, gender, and age</li>
       <li>how their type compares to the average voter</li>
     </ul>
     <button class="unlock-btn" id="unlock-fans">🔒 unlock your full demographic report · ${f.cost}✦</button>
