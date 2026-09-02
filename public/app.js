@@ -5,6 +5,12 @@ const selectedMH = new Set();
 const $ = (s) => document.querySelector(s);
 const $$ = (s) => [...document.querySelectorAll(s)];
 let photoData = null; // uploaded photo as a downscaled data: URL
+let versusKeys = null; // set to a pick(side) fn while a comparison round is active
+document.addEventListener("keydown", (e) => {
+  if (!versusKeys) return;
+  if (e.key === "ArrowLeft") versusKeys("a");
+  else if (e.key === "ArrowRight") versusKeys("b");
+});
 const api = (url, opts) => fetch(url, opts).then(async (r) => ({ status: r.status, body: r.status === 204 ? null : await r.json().catch(() => null) }));
 const post = (url, body) => api(url, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
 
@@ -43,6 +49,7 @@ $("#auth-form").addEventListener("submit", async (e) => {
 // ================= Navigation =================
 document.querySelectorAll("[data-view]").forEach((b) => b.addEventListener("click", () => show(b.dataset.view)));
 function show(view) {
+  versusKeys = null; // leaving any comparison round
   document.querySelectorAll("#app .view").forEach((v) => v.classList.remove("active"));
   $("#view-" + view)?.classList.add("active");
   document.querySelectorAll("nav.tabs button").forEach((b) => b.classList.toggle("active", b.dataset.view === view));
@@ -273,6 +280,7 @@ async function renderGameGrid() {
 document.querySelectorAll("[data-rate]").forEach((b) => b.addEventListener("click", () => { rateGender = b.dataset.rate; show("matchup"); loadMatchup(); }));
 let rateGender = null;
 async function loadMatchup() {
+  renderTasteProgress();
   const { status, body } = await api(`/api/matchup${rateGender ? "?gender=" + rateGender : ""}`);
   if (status >= 400) { $("#matchup").innerHTML = ""; $("#matchup-empty").hidden = false; return; }
   $("#matchup-empty").hidden = true;
@@ -280,10 +288,26 @@ async function loadMatchup() {
       <h3>${esc(u.name)}${u.age ? ", " + u.age : ""}</h3>
       <button class="pick" data-win="${u.id}" data-lose="${u.id === body.a.id ? body.b.id : body.a.id}">choose</button></div>`).join("");
   $("#matchup").querySelectorAll(".pick").forEach((btn) => btn.addEventListener("click", async () => {
+    const before = me.profile.votesCast || 0;
     const { body: res } = await post("/api/vote", { winnerId: btn.dataset.win, loserId: btn.dataset.lose });
     if (res?.credits != null) { setCredits(res.credits); me.profile.credits = res.credits; }
+    if (res?.votesCast != null) { me.profile.votesCast = res.votesCast; announceTasteUnlock(before, res.votesCast); }
     loadMatchup();
   }));
+}
+// Show progress toward the next taste-card unlock.
+function renderTasteProgress() {
+  const el = $("#taste-progress");
+  if (!el) return;
+  const votes = me.profile?.votesCast || 0;
+  const next = (META.tastes || []).filter((t) => votes < t.unlockAt).sort((a, b) => a.unlockAt - b.unlockAt)[0];
+  el.innerHTML = next
+    ? `Rate ${next.unlockAt - votes} more to unlock <b>${esc(next.title)}</b> in your report`
+    : `All taste cards unlocked ✓ — see them in your report`;
+}
+function announceTasteUnlock(before, after) {
+  (META.tastes || []).forEach((t) => { if (before < t.unlockAt && after >= t.unlockAt) toast(`🔓 Unlocked: ${t.title}`); });
+  renderTasteProgress();
 }
 
 // ================= Report ("How people see your photo") =================
@@ -332,7 +356,7 @@ async function loadReport() {
     </div>
     <label class="email-pref" style="margin-top:14px"><input type="checkbox" id="email-pref" ${r.emailOnNewData ? "checked" : ""}/> email me when new data is available</label>`;
 
-  $("#report").innerHTML = attract + guesses + fans + extra;
+  $("#report").innerHTML = attract + tasteSection(r.taste) + guesses + fans + extra;
 
   $("#go-matches")?.addEventListener("click", () => show("matches"));
   $("#buy-pairs")?.addEventListener("click", () => spendAction("/api/buy-pairs", {}));
@@ -376,6 +400,34 @@ async function spendAction(url, body) {
   if (status === 402) { alert("Not enough credits — rate more photos or play games to earn them."); return; }
   if (res?.credits != null) { setCredits(res.credits); me.profile.credits = res.credits; }
   loadReport();
+}
+
+// ================= Your taste (from rating) =================
+function tasteSection(taste = []) {
+  const cards = taste.map((t) => {
+    if (!t.unlocked) {
+      return `<div class="card taste-card locked"><div class="taste-title">${t.emoji} ${esc(t.title)}</div>
+        <div class="taste-line">🔒 rate <b>${t.votesToGo}</b> more ${t.votesToGo === 1 ? "person" : "people"} to unlock</div></div>`;
+    }
+    const val = `${t.value >= 0 ? "+" : ""}${t.value}${t.unit ? " " + esc(t.unit) : ""}`;
+    return `<div class="card taste-card"><div class="taste-title">${t.emoji} ${esc(t.title)}</div>
+      <div class="taste-line">${esc(t.verb)} <b>${esc(t.pole)} ${esc(t.gender)}</b> — more than <b>${t.pct}%</b> of raters</div>
+      <div class="slider-viz">
+        <div class="slider-val" style="left:${t.position}%">${esc(val)}</div>
+        <div class="track"><span class="tick"></span><span class="knob" style="left:${t.position}%"></span></div>
+        <div class="ends"><span>${esc(t.ends[0])}</span><span>average</span><span>${esc(t.ends[1])}</span></div>
+      </div></div>`;
+  }).join("");
+  return `<div class="section-title">💘 Your taste <span class="hint">— from the people you rate</span></div>${cards}`;
+}
+
+function toast(msg) {
+  let t = $("#toast");
+  if (!t) { t = document.createElement("div"); t.id = "toast"; document.body.appendChild(t); }
+  t.textContent = msg;
+  t.classList.add("show");
+  clearTimeout(toast._t);
+  toast._t = setTimeout(() => t.classList.remove("show"), 2600);
 }
 
 // ================= Matches (socials only) =================
@@ -422,36 +474,60 @@ async function playGame(gameKey) {
     setTimeout(runRounds, 350); // brief beat so the selection registers visually
   });
 
-  // ---- Step 2: guess about others ----
+  // ---- Step 2: two-photo comparison rounds ("who is more X") ----
+  let gameGender = null; // null = everyone; "man" | "woman"
   async function runRounds() {
-    let round = 0, correct = 0;
-    const next = async () => {
-      if (round >= cfg.rounds) return finish();
-      round++;
-      const { status, body: g } = await api(`/api/guess?axis=${game.axis}`);
-      if (status >= 400) { wrap.innerHTML = `<p class="empty">Need more profiles to play.</p>` + gamesFooter(game.key); wireFooter(); return; }
-      wrap.innerHTML = `<p class="game-sub">Round ${round} of ${cfg.rounds} · ${correct} correct</p>
-        <div class="card game-target">${avatar(g.target)}
-          <div class="game-q">${game.emoji} Is ${esc(g.target.name)} more…</div>
-          <div class="opts">
-            <span class="opt" data-g="high">${esc(game.poles[1])}</span>
-            <span class="opt" data-g="low">${esc(game.poles[0])}</span>
-          </div>
-          <div class="result" id="game-result"></div>
-        </div>${gamesFooter(game.key)}`;
+    const stats = (await api("/api/guess-stats")).body || {};
+    const base = { correct: stats[game.axis]?.correct || 0, total: stats[game.axis]?.total || 0 };
+    let round = 0, correct = 0, sessionVotes = 0, sessionCorrect = 0, locked = false;
+    let a, b;
+
+    const acc = () => {
+      const t = base.total + sessionVotes;
+      return t ? Math.round(((base.correct + sessionCorrect) / t) * 100) : null;
+    };
+    const render = () => {
+      const av = acc();
+      wrap.innerHTML = `<p class="game-sub">For every ${cfg.need}/${cfg.rounds} correct, earn ${cfg.reward} credits.</p>
+        <div class="versus">
+          <div class="vs-card" data-pick="a">${avatar(a)}<div class="pick-hint">click, or <b>←</b> arrow key</div></div>
+          <div class="acc-badge"><b>${av == null ? "—" : av + "%"}</b><span>ACCURACY</span><small>${base.total + sessionVotes} pairs</small></div>
+          <div class="vs-card" data-pick="b">${avatar(b)}<div class="pick-hint">click, or <b>→</b> arrow key</div></div>
+        </div>
+        <div class="versus-foot">
+          <span>${sessionVotes} this session · ${base.total + sessionVotes} all time</span>
+          <span class="voting-on">voting on: <a data-vg="man" class="${gameGender === "man" ? "on" : ""}">men</a> <a data-vg="woman" class="${gameGender === "woman" ? "on" : ""}">women</a></span>
+        </div>
+        <div class="result" id="game-result"></div>
+        <p class="game-sub" style="text-align:center">Round ${Math.min(round + 1, cfg.rounds)} of ${cfg.rounds} · ${correct} correct</p>
+        ${gamesFooter(game.key)}`;
       wireFooter();
-      wrap.querySelectorAll("[data-g]").forEach((b) => b.addEventListener("click", async () => {
-        wrap.querySelectorAll("[data-g]").forEach((x) => x.style.pointerEvents = "none");
-        b.classList.add("sel");
-        const { body: out } = await post("/api/guess", { targetId: g.target.id, axis: game.axis, guess: b.dataset.g });
-        if (out.correct) correct++;
-        const res = $("#game-result");
-        res.className = "result " + (out.correct ? "ok" : "no");
-        res.textContent = (out.correct ? "Correct! " : "Nope — ") + "they're " + out.actualLabel;
-        setTimeout(next, 1100);
+      wrap.querySelectorAll("[data-vg]").forEach((el) => el.addEventListener("click", () => {
+        gameGender = gameGender === el.dataset.vg ? null : el.dataset.vg;
+        loadPair();
       }));
+      wrap.querySelectorAll("[data-pick]").forEach((el) => el.addEventListener("click", () => choose(el.dataset.pick)));
+      versusKeys = choose;
+    };
+    const loadPair = async () => {
+      const { status, body } = await api(`/api/versus?axis=${game.axis}${gameGender ? "&gender=" + gameGender : ""}`);
+      if (status >= 400) { versusKeys = null; wrap.innerHTML = `<p class="empty">Not enough profiles for that filter.</p>${gamesFooter(game.key)}`; wireFooter(); return; }
+      a = body.a; b = body.b; render();
+    };
+    const choose = async (pick) => {
+      if (locked || !a || !b) return;
+      locked = true;
+      wrap.querySelector(`[data-pick="${pick}"]`)?.classList.add("sel");
+      const { body: out } = await post("/api/versus-guess", { axis: game.axis, aId: a.id, bId: b.id, pick });
+      sessionVotes++; round++;
+      if (out.correct) { correct++; sessionCorrect++; }
+      const res = $("#game-result");
+      res.className = "result " + (out.correct ? "ok" : "no");
+      res.textContent = out.correct ? "Correct!" : "Nope";
+      setTimeout(async () => { locked = false; if (round >= cfg.rounds) return finish(); await loadPair(); }, 850);
     };
     const finish = async () => {
+      versusKeys = null;
       const { body: rew } = await post("/api/games/reward", { correct });
       if (rew?.credits != null) { setCredits(rew.credits); me.profile.credits = rew.credits; }
       wrap.innerHTML = `<div class="card" style="text-align:center">
@@ -461,6 +537,6 @@ async function playGame(gameKey) {
       wireFooter();
       $("#again").addEventListener("click", () => playGame(game.key));
     };
-    next();
+    loadPair();
   }
 }

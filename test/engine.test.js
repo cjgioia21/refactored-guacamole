@@ -5,7 +5,7 @@ import { similarity, emptyAcc } from "../src/vectors.js";
 import {
   updateElo, recordVote, percentile, matchScore, findMatches, guessOutcome,
   report, typeSummary, attractedGenders, likes, mutualMatches, pickRate,
-  attractivenessBand, guessConsensus, fansReport, GAMES, BASE_ELO, REVEAL_MIN,
+  attractivenessBand, guessConsensus, fansReport, tasteReport, GAMES, TASTES, BASE_ELO, REVEAL_MIN,
 } from "../src/engine.js";
 
 function mkUser(id, answers, extra = {}) {
@@ -164,6 +164,22 @@ test("recordVote aggregates fan demographics; fansReport surfaces overrepresenta
   assert.equal(rep.fans, 2);
   assert.equal(rep.mentalHealth[0].flag, "anxiety");
   assert.ok(rep.mentalHealth[0].pct === 100);
+});
+
+test("tasteReport gates cards by votesCast and reports pole + slider position", () => {
+  const voter = mkUser("v", answersAll(0), { gender: "man" });
+  // voter repeatedly picks right-leaning women -> politics taste = right, gender women
+  const win = mkUser("w", answersAll(0.8), { gender: "woman" });
+  const pol = TASTES.find((t) => t.key === "politics");
+  const t0 = tasteReport(voter, [voter, win]).find((t) => t.key === "politics");
+  assert.equal(t0.unlocked, false); // no votes yet
+  assert.equal(t0.votesToGo, pol.unlockAt);
+  for (let i = 0; i < pol.unlockAt; i++) recordVote(voter, win, mkUser("l" + i, answersAll(-0.8), { gender: "woman" }));
+  const t1 = tasteReport(voter, [voter, win]).find((t) => t.key === "politics");
+  assert.equal(t1.unlocked, true);
+  assert.equal(t1.pole, "right-leaning"); // picked right-leaning
+  assert.equal(t1.gender, "women");
+  assert.ok(t1.position >= 50 && t1.position <= 100); // knob on the high side
 });
 
 test("guessConsensus needs a minimum before it is ready", () => {

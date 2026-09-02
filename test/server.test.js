@@ -138,6 +138,29 @@ test("buying a credit pack grants credits", async () => {
   assert.equal((await a("POST", "/api/buy-credits", { packId: "nope" })).status, 400);
 });
 
+test("versus comparison: scores the higher trait and records guesses", async () => {
+  const a = client();
+  await a("POST", "/auth/signup", { email: "vs@ex.com", password: "hunter2" });
+  await a("POST", "/api/profile", { name: "Val", gender: "woman", answers: {} });
+  // Two targets with known politics: right (pol high) vs left (pol low).
+  const right = client(), left = client();
+  await right("POST", "/auth/signup", { email: "r@ex.com", password: "hunter2" });
+  await left("POST", "/auth/signup", { email: "l@ex.com", password: "hunter2" });
+  const pr = (await right("POST", "/api/profile", { name: "R", gender: "man", answers: { pol11: 6 } })).body; // most-right
+  const pl = (await left("POST", "/api/profile", { name: "L", gender: "man", answers: { pol11: 0 } })).body; // most-left
+
+  const grab = await a("GET", "/api/versus?axis=pol&gender=man");
+  assert.equal(grab.status, 200);
+  assert.ok(grab.body.a && grab.body.b && grab.body.a.id !== grab.body.b.id);
+
+  // Picking the actually-more-right profile is correct.
+  const rightIsA = grab.body.a.id === pr.id;
+  const res = await a("POST", "/api/versus-guess", { axis: "pol", aId: grab.body.a.id, bId: grab.body.b.id, pick: rightIsA ? "a" : "b" });
+  assert.equal(res.body.correct, true);
+  const stats = (await a("GET", "/api/guess-stats")).body;
+  assert.ok(stats.pol.total >= 1 && stats.pol.correct >= 1);
+});
+
 test("guessing updates accuracy stats", async () => {
   const a = client();
   await a("POST", "/auth/signup", { email: "g@ex.com", password: "hunter2" });

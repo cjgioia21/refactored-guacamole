@@ -70,6 +70,14 @@ if (store.all().length === 0) {
     recordVote(voter, winner, winner === x ? y : x);
   }
 
+  // Demo rates a lot so its taste traits (every 75 rates) unlock for the report.
+  for (let v = 0; v < 240; v++) {
+    let x = created[rnd(created.length)];
+    let y = created[rnd(created.length)];
+    if (x === y) continue;
+    recordVote(demo, appeal(demo, x) >= appeal(demo, y) ? x : y, appeal(demo, x) >= appeal(demo, y) ? y : x);
+  }
+
   // Strangers guess about photos (populates "what strangers guess about you").
   for (let g = 0; g < 600; g++) {
     const target = pool[rnd(pool.length)];

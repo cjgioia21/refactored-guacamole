@@ -28,7 +28,8 @@ games; questionnaire answers are never shown to anyone.
 ## Credits
 
 Credits are deliberately **hard to earn** — you get them by rating other people
-(1 credit per **12** votes) and by playing guessing rounds (**3 of 5 → 2 credits**).
+(1 credit per **50** votes) and by playing guessing rounds (**3 of 5 → 2 credits**).
+New **taste traits** unlock every 75 people you rate.
 Each game opens with "the same question about you" — your private self-answer that
 feeds the aggregate — before you guess about others:
 
@@ -95,6 +96,14 @@ four confirmation checkboxes that gate the **submit my face** button.
 - **Report economy** — `attractivenessBand` (confidence band + pairs progress),
   `guessConsensus` (per-game reveal), and `fansReport` (demographics of your fans,
   incl. mental-health overrepresentation vs. the population baseline).
+- **Your taste** — `tasteReport` turns your rating choices into taste cards
+  (politics/money/bodycount/dominance/mental-health/gooner): which pole you lean
+  to, a "more than X% of raters" percentile, and a slider position. Cards **unlock
+  progressively** as your `votesCast` passes each `TASTES[].unlockAt`.
+- **Guessing rounds** are two-photo comparisons ("who is more X"): `GET /api/versus`
+  serves two profiles, `POST /api/versus-guess` scores the higher trait value and
+  records a directional guess onto each photo. Pick by click or ←/→ arrow keys,
+  with a live accuracy badge and a men/women filter.
 
 `src/questions.js` maps **60 self-report questions — 12 per quiz** onto the five
 guessing-game axes (bodycount, net worth, politics, dominance, gooner nature), so

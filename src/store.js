@@ -215,5 +215,6 @@ export function publicView(u) {
     elo: Math.round(u.elo),
     matchups: u.matchups || 0,
     credits: u.credits || 0,
+    votesCast: u.votesCast || 0,
   };
 }

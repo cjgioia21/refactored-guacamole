@@ -275,6 +275,66 @@ export const GAMES = [
 ];
 export const gameByKey = (k) => GAMES.find((g) => g.key === k) || null;
 
+// ---------- "Your taste": what your rating choices reveal about your type ----------
+// Cards unlock progressively as you rate more people.
+// A new taste trait unlocks every TASTE_EVERY people you rate.
+export const TASTE_EVERY = 75;
+export const TASTES = [
+  { key: "politics", axis: "pol", emoji: "🗳️", title: "Politics taste", verb: "you prefer", low: "left-leaning", high: "right-leaning", ends: ["left-leaning", "right-leaning"] },
+  { key: "money", axis: "networth", emoji: "💰", title: "Money taste", verb: "you lean toward", low: "broke", high: "rich", ends: ["broke", "rich"] },
+  { key: "bodycount", axis: "bodycount", emoji: "🍑", title: "Bodycount taste", verb: "you go for", low: "low-count", high: "high-count", ends: ["low count", "high count"] },
+  { key: "dominance", axis: "dom", emoji: "⛓️", title: "Dominance taste", verb: "you prefer", low: "submissive", high: "dominant", ends: ["submissive", "dominant"] },
+  { key: "mental", axis: "__mh", emoji: "💊", title: "Mentally ill taste", verb: "you're drawn to", low: "stable", high: "mentally ill", ends: ["avoids", "drawn"], unit: "diagnoses" },
+  { key: "gooner", axis: "gooner", emoji: "💦", title: "Gooner taste", verb: "you're drawn to", low: "tame", high: "gooner", ends: ["tame", "gooner"] },
+].map((t, i) => ({ ...t, unlockAt: (i + 1) * TASTE_EVERY }));
+
+function mhBaseRate(population) {
+  const rated = population.length || 1;
+  const with_ = population.filter((u) => (u.mentalHealth || []).some((f) => f !== "none")).length;
+  return with_ / rated;
+}
+function tasteValue(voter, taste, population) {
+  if (taste.axis === "__mh") {
+    const n = voter.type?.n || 0;
+    if (!n) return 0;
+    const pickRate = (voter.type.mhChosen || 0) / n;
+    return Math.max(-1, Math.min(1, (pickRate - mhBaseRate(population)) * 2));
+  }
+  return voter.type?.vector?.[taste.axis] || 0;
+}
+function tasteGender(voter) {
+  const g = voter.type?.gender || {};
+  const top = Object.entries(g).sort((a, b) => b[1] - a[1])[0];
+  return { man: "men", woman: "women", nonbinary: "enbies" }[top?.[0]] || "people";
+}
+
+// A taste report: one card per axis, unlocked once you've rated enough people.
+export function tasteReport(voter, population) {
+  const votes = voter.votesCast || 0;
+  const raters = population.filter((u) => u.id !== voter.id && (u.votesCast || 0) > 0 && u.type?.n);
+  return TASTES.map((t) => {
+    const unlocked = votes >= t.unlockAt;
+    const value = tasteValue(voter, t, population);
+    const sign = value >= 0 ? 1 : -1;
+    const mine = Math.abs(value);
+    // "more than X% of raters" — you lean toward your pole harder than they do.
+    let pct = 50;
+    if (raters.length) {
+      const weaker = raters.filter((u) => sign * tasteValue(u, t, population) < mine).length;
+      pct = Math.min(99, Math.round((weaker / raters.length) * 100));
+    }
+    return {
+      key: t.key, emoji: t.emoji, title: t.title, verb: t.verb, unit: t.unit || null,
+      ends: t.ends, unlocked, unlockAt: t.unlockAt, votesToGo: Math.max(0, t.unlockAt - votes),
+      gender: tasteGender(voter),
+      pole: value >= 0 ? t.high : t.low,
+      value: Math.round(value * 10) / 10,
+      position: Math.round(((value + 1) / 2) * 100), // 0..100 for the slider knob
+      pct,
+    };
+  });
+}
+
 // ---------- Credit economy: attractiveness band, guess consensus, fan report ----------
 export const ESTABLISHED_MIN = 8; // matchups before a photo is "established"
 export const PAIRS_TARGET = 400; // matchup appearances that "complete" the data

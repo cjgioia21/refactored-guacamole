@@ -8,7 +8,7 @@ import * as auth from "./src/auth.js";
 import { QUESTIONS, AXES } from "./src/questions.js";
 import {
   recordVote, report, guessOutcome, matchScore, mutualMatches, likes,
-  GAMES, gameByKey, attractivenessBand, guessConsensus, fansReport,
+  GAMES, gameByKey, attractivenessBand, guessConsensus, fansReport, tasteReport, TASTES,
 } from "./src/engine.js";
 
 // Credit economy
@@ -28,7 +28,7 @@ const PORT = process.env.PORT || 3000;
 app.use(express.json({ limit: "1mb" })); // room for small uploaded data: URLs
 app.use(express.static(join(__dirname, "public")));
 
-const CREDIT_PER_VOTES = 12; // credits are hard to earn: 1 per 12 ratings
+const CREDIT_PER_VOTES = 50; // 1 credit per 50 ratings — credits are scarce
 const GUESS_AXES = [...Object.keys(AXES), "age", "gender", "mh"];
 const oauthStates = new Set();
 
@@ -103,6 +103,7 @@ app.get("/api/me", (req, res) => {
 app.get("/api/questions", (_req, res) => res.json({ questions: QUESTIONS, axes: AXES }));
 app.get("/api/meta", (_req, res) =>
   res.json({ axes: AXES, guessAxes: GUESS_AXES, games: GAMES, cost: COST, pairsAmount: PAIRS_AMOUNT,
+    tastes: TASTES.map((t) => ({ key: t.key, title: t.title, unlockAt: t.unlockAt })),
     creditPerVotes: CREDIT_PER_VOTES, game: { rounds: GAME_ROUNDS, need: GAME_NEED, reward: GAME_REWARD } })
 );
 
@@ -153,7 +154,7 @@ app.post("/api/vote", requireProfile, (req, res) => {
     creditEarned = true;
   }
   store.save();
-  res.json({ ok: true, creditEarned, credits: req.profile.credits });
+  res.json({ ok: true, creditEarned, credits: req.profile.credits, votesCast: req.profile.votesCast });
 });
 
 // ---------- Report & matches ----------
@@ -183,6 +184,8 @@ app.get("/api/report", requireProfile, (req, res) => {
     credits: me.credits || 0,
     cost: COST,
     prediction: me.prediction ?? null,
+    votesCast: me.votesCast || 0,
+    taste: tasteReport(me, pop),
     attractiveness: band,
     games,
     emailOnNewData: !!me.emailOnNewData,
@@ -215,6 +218,37 @@ app.get("/api/match/:a/:b", (req, res) => {
 });
 
 // ---------- Guessing games ----------
+// Two-photo comparison: "who is more X". Returns two distinct targets.
+app.get("/api/versus", (req, res) => {
+  const axis = req.query.axis;
+  if (!AXES[axis]) return res.status(400).json({ error: "unknown axis" });
+  const me = myProfile(req);
+  let pool = store.all().filter((u) => !me || u.id !== me.id);
+  if (req.query.gender) pool = pool.filter((u) => u.gender === req.query.gender);
+  if (pool.length < 2) return res.status(409).json({ error: "not enough profiles" });
+  const a = pool[Math.floor(Math.random() * pool.length)];
+  let b = pool[Math.floor(Math.random() * pool.length)];
+  for (let g = 0; b.id === a.id && g < 50; g++) b = pool[Math.floor(Math.random() * pool.length)];
+  res.json({ a: store.publicView(a), b: store.publicView(b), axis });
+});
+
+// Score a comparison: correct = picked the higher trait value.
+app.post("/api/versus-guess", (req, res) => {
+  const { axis, aId, bId, pick } = req.body || {};
+  const a = store.get(aId), b = store.get(bId);
+  if (!AXES[axis] || !a || !b || (pick !== "a" && pick !== "b")) return res.status(400).json({ error: "invalid guess" });
+  const va = a.traits[axis] || 0, vb = b.traits[axis] || 0;
+  const higher = va >= vb ? "a" : "b";
+  const correct = pick === higher;
+  // Record each rater's directional guess about the two photos.
+  const picked = pick === "a" ? a : b, other = pick === "a" ? b : a;
+  store.recordGuessAbout(picked.id, axis, "high");
+  store.recordGuessAbout(other.id, axis, "low");
+  const me = myProfile(req);
+  if (me) store.recordGuess(me.id, axis, correct);
+  res.json({ correct, higher });
+});
+
 app.get("/api/guess", (req, res) => {
   const axis = req.query.axis;
   if (!GUESS_AXES.includes(axis)) return res.status(400).json({ error: "unknown axis" });
