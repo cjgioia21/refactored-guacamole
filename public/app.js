@@ -96,12 +96,54 @@ async function buildForms() {
   $("#questions").innerHTML = questions.map((q, n) => {
     const header = q.category !== lastCat ? `<div class="quiz-head">${esc(q.category)} <span class="hint">quiz</span></div>` : "";
     lastCat = q.category;
+    const body = q.type === "tiered"
+      ? `<div class="opts tiers">${q.tierGroups.map((t, ti) => `<span class="opt tier" data-tier="${ti}">${esc(t.label)}</span>`).join("")}</div>
+         <div class="opts fine" hidden></div>`
+      : `<div class="opts">${q.options.map((o, i) => `<span class="opt" data-i="${i}">${esc(o.label)}</span>`).join("")}</div>`;
     return `${header}<div class="q" data-qid="${q.id}">
-      <p><span class="q-num">${n + 1}.</span> ${esc(q.prompt)}</p>
-      <div class="opts">${q.options.map((o, i) => `<span class="opt" data-i="${i}">${esc(o.label)}</span>`).join("")}</div></div>`;
+      <p><span class="q-num">${n + 1}.</span> ${esc(q.prompt)}</p>${body}</div>`;
   }).join("");
-  $("#questions").querySelectorAll(".q").forEach((q) => q.querySelectorAll(".opt").forEach((opt) =>
-    opt.addEventListener("click", () => { q.querySelectorAll(".opt").forEach((o) => o.classList.remove("sel")); opt.classList.add("sel"); q.dataset.answer = opt.dataset.i; })));
+
+  // Simple questions: click sets the answer.
+  $("#questions").querySelectorAll(".q > .opts:not(.tiers):not(.fine)").forEach((opts) =>
+    opts.querySelectorAll(".opt").forEach((opt) => opt.addEventListener("click", () => {
+      opts.querySelectorAll(".opt").forEach((o) => o.classList.remove("sel"));
+      opt.classList.add("sel");
+      opt.closest(".q").dataset.answer = opt.dataset.i;
+    })));
+
+  // Tiered questions: pick a range -> expand finer options -> pick the exact one.
+  const qByGroups = Object.fromEntries(questions.filter((q) => q.type === "tiered").map((q) => [q.id, q.tierGroups]));
+  $("#questions").querySelectorAll(".q").forEach((qEl) => {
+    const tierRow = qEl.querySelector(".tiers");
+    if (!tierRow) return;
+    const groups = qByGroups[qEl.dataset.qid];
+    const fineRow = qEl.querySelector(".fine");
+    tierRow.querySelectorAll(".tier").forEach((tierEl) => tierEl.addEventListener("click", () => {
+      tierRow.querySelectorAll(".tier").forEach((t) => t.classList.remove("sel"));
+      tierEl.classList.add("sel");
+      const g = groups[Number(tierEl.dataset.tier)];
+      // render the finer options for this range
+      const opts = [];
+      for (let i = g.from; i < g.from + g.count; i++) opts.push(i);
+      fineRow.hidden = false;
+      fineRow.innerHTML = (g.count > 1 ? `<span class="fine-label">exactly how many?</span>` : "") +
+        opts.map((i) => `<span class="opt" data-i="${i}">${esc(questionsFineLabel(qEl, i))}</span>`).join("");
+      // auto-select if the range has a single value
+      if (g.count === 1) qEl.dataset.answer = g.from;
+      else delete qEl.dataset.answer;
+      fineRow.querySelectorAll(".opt").forEach((opt) => opt.addEventListener("click", () => {
+        fineRow.querySelectorAll(".opt").forEach((o) => o.classList.remove("sel"));
+        opt.classList.add("sel");
+        qEl.dataset.answer = opt.dataset.i;
+      }));
+    }));
+  });
+  // stash option labels for tiered fine rendering
+  window.__tieredOpts = Object.fromEntries(questions.filter((q) => q.type === "tiered").map((q) => [q.id, q.options]));
+}
+function questionsFineLabel(qEl, i) {
+  return (window.__tieredOpts?.[qEl.dataset.qid]?.[i]?.label) ?? String(i);
 }
 
 $("#onboard-form").addEventListener("submit", async (e) => {

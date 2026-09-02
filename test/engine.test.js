@@ -30,6 +30,20 @@ test("empty answers give a zero vector", () => {
   assert.ok(Object.values(profileFromAnswers({})).every((x) => x === 0));
 });
 
+test("tiered bodycount question flattens to fine options and still scores", () => {
+  const bc1 = QUESTIONS.find((q) => q.id === "bc1");
+  assert.equal(bc1.type, "tiered");
+  // tierGroups index into the flat options list without overlap or gaps
+  let expected = 0;
+  for (const g of bc1.tierGroups) { assert.equal(g.from, expected); expected += g.count; }
+  assert.equal(expected, bc1.options.length);
+  // picking the highest fine option maxes the bodycount axis
+  const top = bc1.options.length - 1;
+  const v = profileFromAnswers({ bc1: top });
+  assert.equal(v.bodycount, bc1.options[top].value);
+  assert.ok(v.bodycount > 0.9);
+});
+
 test("updateElo raises winner, lowers loser, conserves points", () => {
   const { winner, loser } = updateElo(1200, 1200);
   assert.ok(winner > 1200 && loser < 1200);

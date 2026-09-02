@@ -16,6 +16,20 @@ const q = (id, category, prompt, axis, options) => ({
   options: options.map(([label, value]) => ({ label, value })),
 });
 
+// tiered(id, ...): a two-step question. The user first picks a coarse range,
+// which expands into finer options for a precise, accurate answer. Internally
+// the fine options are flattened into `options` (so scoring is unchanged) and
+// `tierGroups` tells the UI how to group them.
+const tiered = (id, category, prompt, axis, tiers) => {
+  const options = [];
+  const tierGroups = tiers.map(([label, opts]) => {
+    const from = options.length;
+    for (const [l, v] of opts) options.push({ label: l, value: v });
+    return { label, from, count: opts.length };
+  });
+  return { id, category, prompt, axis, type: "tiered", options, tierGroups };
+};
+
 // Common 5-point scales (pass reverse=true to flip direction).
 const S5 = (a, b) => [[a, -1], [`somewhat ${a}`, -0.5], ["neutral", 0], [`somewhat ${b}`, 0.5], [b, 1]];
 const FREQ = [["never", -1], ["rarely", -0.5], ["sometimes", 0], ["often", 0.5], ["constantly", 1]];
@@ -24,8 +38,14 @@ const rev = (scale) => scale.map(([l, v]) => [l, -v]);
 
 export const QUESTIONS = [
   // ---------- Bodycount (sexual experience) ----------
-  q("bc1", "Bodycount", "How many people have you slept with?", "bodycount",
-    [["0", -1], ["1–3", -0.5], ["4–9", 0], ["10–25", 0.5], ["25+", 1]]),
+  tiered("bc1", "Bodycount", "How many people have you slept with?", "bodycount", [
+    ["0", [["0", -1]]],
+    ["1–3", [["1", -0.85], ["2", -0.75], ["3", -0.65]]],
+    ["4–9", [["4", -0.5], ["5", -0.42], ["6", -0.35], ["7", -0.28], ["8", -0.2], ["9", -0.12]]],
+    ["10–25", [["10–12", -0.05], ["13–15", 0.05], ["16–20", 0.18], ["21–25", 0.3]]],
+    ["25–100", [["26–40", 0.5], ["41–60", 0.65], ["61–80", 0.78], ["81–100", 0.88]]],
+    ["100+", [["101–200", 0.94], ["200–500", 0.98], ["500+", 1]]],
+  ]),
   q("bc2", "Bodycount", "New partners in the last year?", "bodycount",
     [["none", -1], ["one", -0.5], ["a couple", 0], ["several", 0.5], ["lots", 1]]),
   q("bc3", "Bodycount", "How do you feel about casual sex?", "bodycount", S5("against it", "love it")),
