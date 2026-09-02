@@ -5,7 +5,7 @@ import { dirname, join } from "node:path";
 import * as store from "./src/store.js";
 import { QUESTIONS, AXES } from "./src/questions.js";
 import {
-  recordVote, report, guessOutcome, matchScore, findMatches,
+  recordVote, report, guessOutcome, matchScore, mutualMatches, likes,
   GENDERS, ORIENTATIONS, MH_FLAGS,
 } from "./src/engine.js";
 
@@ -81,16 +81,17 @@ app.get("/api/users/:id/report", (req, res) => {
   res.json(report(u, store.all()));
 });
 
+// Mutual matches: you both rated each other over other people.
 app.get("/api/users/:id/matches", (req, res) => {
   const u = store.get(req.params.id);
   if (!u) return res.status(404).json({ error: "not found" });
-  const limit = Math.min(Number(req.query.limit) || 10, 50);
+  const limit = Math.min(Number(req.query.limit) || 20, 50);
   res.json(
-    findMatches(u, store.all(), { limit }).map((m) => ({
-      user: store.publicView(m.user),
-      score: m.score,
-      youLikeThem: m.aLikesB,
-      theyLikeYou: m.bLikesA,
+    mutualMatches(u, store.all(), { limit }).map((m) => ({
+      user: store.matchView(m.user), // matched -> socials revealed
+      youPickRate: m.youPickRate,
+      theyPickRate: m.theyPickRate,
+      strength: m.strength,
     }))
   );
 });
@@ -99,20 +100,30 @@ app.get("/api/match/:a/:b", (req, res) => {
   const a = store.get(req.params.a);
   const b = store.get(req.params.b);
   if (!a || !b) return res.status(404).json({ error: "not found" });
-  res.json(matchScore(a, b, store.all()));
+  res.json({ ...matchScore(a, b, store.all()), mutual: likes(a, b.id) && likes(b, a.id) });
 });
 
-// --- Social-media sharing (replaces messaging) ---
-app.post("/api/users/:id/share", (req, res) => {
-  const result = store.share(req.params.id, req.body?.targetId);
-  if (!result) return res.status(400).json({ error: "invalid share" });
-  res.json(result); // { mutual }
+// --- Messaging (only between mutually-matched users) ---
+function requireMatch(aId, bId) {
+  const a = store.get(aId);
+  const b = store.get(bId);
+  if (!a || !b) return { error: 404 };
+  if (!(likes(a, b.id) && likes(b, a.id))) return { error: 403 };
+  return { a, b };
+}
+
+app.get("/api/users/:id/messages/:otherId", (req, res) => {
+  const m = requireMatch(req.params.id, req.params.otherId);
+  if (m.error) return res.status(m.error).json({ error: m.error === 403 ? "not matched" : "not found" });
+  res.json(store.thread(req.params.id, req.params.otherId));
 });
 
-app.get("/api/users/:id/connections", (req, res) => {
-  const conns = store.connections(req.params.id);
-  if (conns == null) return res.status(404).json({ error: "not found" });
-  res.json(conns);
+app.post("/api/users/:id/messages/:otherId", (req, res) => {
+  const m = requireMatch(req.params.id, req.params.otherId);
+  if (m.error) return res.status(m.error).json({ error: m.error === 403 ? "not matched" : "not found" });
+  const thread = store.addMessage(req.params.id, req.params.otherId, req.body?.text);
+  if (!thread) return res.status(400).json({ error: "empty message" });
+  res.json(thread);
 });
 
 // --- Guessing games ---

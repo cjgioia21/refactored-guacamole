@@ -54,8 +54,51 @@ export function recordVote(voter, winner, loser) {
   // Winner is found attractive by this voter -> learn who admires them.
   accumulate(winner.admirers, voter.traits);
 
+  // Revealed preference: record that the voter rated `winner` over `loser`.
+  bumpRating(voter, winner.id, "w");
+  bumpRating(voter, loser.id, "l");
+
   voter.votesCast = (voter.votesCast || 0) + 1;
   return { winner, loser };
+}
+
+function bumpRating(voter, id, kind) {
+  voter.ratings = voter.ratings || {};
+  const r = voter.ratings[id] || (voter.ratings[id] = { w: 0, l: 0 });
+  r[kind] += 1;
+}
+
+// Does `user` prefer `otherId` — i.e. rate their photo over others' more often
+// than not? This is the revealed "you rated them higher than other people".
+export function likes(user, otherId) {
+  const r = user.ratings?.[otherId];
+  return !!r && r.w > r.l;
+}
+
+// Share of matchups in which `user` chose `otherId` (0..1), for display.
+export function pickRate(user, otherId) {
+  const r = user.ratings?.[otherId];
+  if (!r || r.w + r.l === 0) return 0;
+  return r.w / (r.w + r.l);
+}
+
+// A match is mutual revealed preference: both rated each other over others.
+// This is what unlocks messaging between two users.
+export function mutualMatches(user, population, { limit = 20 } = {}) {
+  return population
+    .filter((o) => o.id !== user.id && likes(user, o.id) && likes(o, user.id))
+    .map((o) => {
+      const you = user.ratings[o.id];
+      const them = o.ratings[user.id];
+      return {
+        user: o,
+        strength: you.w - you.l + (them.w - them.l),
+        youPickRate: Math.round(pickRate(user, o.id) * 100),
+        theyPickRate: Math.round(pickRate(o, user.id) * 100),
+      };
+    })
+    .sort((a, b) => b.strength - a.strength)
+    .slice(0, limit);
 }
 
 // Fold a chosen winner's demographics into the voter's learned type buckets.
@@ -165,12 +208,21 @@ export function report(user, population) {
     likedBy: describe(user.admirers.vector), // trait profile of admirers
     yourType: typeSummary(user), // learned from the photos you chose
     selfTraits: describe(user.traits),
-    topMatches: findMatches(user, population, { limit: 6 }).map((m) => ({
+    // Mutual matches: you both rated each other over others -> messaging unlocked.
+    matches: mutualMatches(user, population, { limit: 12 }).map((m) => ({
+      id: m.user.id,
+      name: m.user.name,
+      photo: m.user.photo,
+      youPickRate: m.youPickRate,
+      theyPickRate: m.theyPickRate,
+    })),
+    // People you rated highly who haven't matched you back yet.
+    crushes: population.filter((o) => o.id !== user.id && likes(user, o.id) && !likes(o, user.id)).length,
+    // Suggested profiles (predicted mutual attraction) to go rate next.
+    suggestions: findMatches(user, population, { limit: 4 }).map((m) => ({
       id: m.user.id,
       name: m.user.name,
       score: m.score,
-      theyLikeYou: m.bLikesA,
-      youLikeThem: m.aLikesB,
     })),
   };
 }

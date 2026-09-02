@@ -69,11 +69,20 @@
       <div id="report"></div>
     </section>
 
-    <!-- Connections -->
-    <section id="view-connections" class="view">
-      <h2>Connections</h2>
-      <p class="sub">Socials unlock only when you've both opted to share.</p>
-      <div id="connections" class="cards"></div>
+    <!-- Matches + messaging -->
+    <section id="view-matches" class="view">
+      <h2>Matches</h2>
+      <p class="sub">You match when you've both rated each other over other people. A match unlocks messaging.</p>
+      <div id="matches-list" class="cards"></div>
+      <div id="chat" hidden>
+        <button class="ghost" id="chat-back" style="margin-bottom:12px">← back to matches</button>
+        <div id="chat-header"></div>
+        <div id="chat-log" class="chat-log"></div>
+        <form id="chat-form" class="chat-form">
+          <input id="chat-input" placeholder="Say something…" maxlength="1000" autocomplete="off" />
+          <button class="primary" type="submit">Send</button>
+        </form>
+      </div>
     </section>
 
     <!-- Guessing games -->
@@ -89,7 +98,7 @@
     <button data-view="matchup">Rate</button>
     <button data-view="games">Guess</button>
     <button data-view="report" id="tab-report" disabled>Report</button>
-    <button data-view="connections" id="tab-conn" disabled>Connect</button>
+    <button data-view="matches" id="tab-matches" disabled>Matches</button>
     <button data-view="onboard">Profile</button>
   </nav>
 

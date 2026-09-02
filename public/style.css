@@ -91,6 +91,14 @@ legend { color: var(--muted); font-size: 13px; padding: 0 6px; }
 .result.no { color: var(--red); }
 .progress { text-align: center; color: var(--muted); margin-bottom: 10px; }
 
+.match-card { cursor: pointer; text-align: center; }
+.match-card img, .match-card .avatar { width: 100%; aspect-ratio: 3/4; object-fit: cover; border-radius: 12px; margin-bottom: 8px; }
+.chat-log { background: var(--card); border: 1px solid var(--line); border-radius: 14px; padding: 14px; min-height: 300px; max-height: 55vh; overflow-y: auto; display: flex; flex-direction: column; gap: 8px; margin-bottom: 12px; }
+.msg { max-width: 78%; padding: 9px 13px; border-radius: 16px; font-size: 15px; line-height: 1.35; }
+.msg.me { align-self: flex-end; background: var(--accent); color: #fff; border-bottom-right-radius: 4px; }
+.msg.them { align-self: flex-start; background: #eceffa; color: var(--ink); border-bottom-left-radius: 4px; }
+.chat-form { display: flex; gap: 8px; }
+.chat-form input { flex: 1; }
 nav.tabs { position: fixed; bottom: 0; left: 0; right: 0; display: flex; background: var(--card); border-top: 1px solid var(--line); }
 nav.tabs button { flex: 1; border: 0; border-radius: 0; background: transparent; color: var(--muted); padding: 14px 0; font-size: 14px; }
 nav.tabs button.active { color: var(--accent); font-weight: 700; }

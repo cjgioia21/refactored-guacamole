@@ -6,16 +6,18 @@ import { emptyAcc } from "./vectors.js";
 import { BASE_ELO } from "./engine.js";
 
 const DATA_FILE = new URL("../data/users.json", import.meta.url);
+const THREADS_FILE = new URL("../data/threads.json", import.meta.url);
 
-let users = load();
+let users = load(DATA_FILE, []);
+let threads = load(THREADS_FILE, {}); // { pairKey: [{from, text, at}] }
 
-function load() {
+function load(file, fallback) {
   try {
-    if (existsSync(DATA_FILE)) return JSON.parse(readFileSync(DATA_FILE, "utf8"));
+    if (existsSync(file)) return JSON.parse(readFileSync(file, "utf8"));
   } catch {
-    /* corrupt/missing -> empty */
+    /* corrupt/missing -> fallback */
   }
-  return [];
+  return fallback;
 }
 
 function persist() {
@@ -25,6 +27,16 @@ function persist() {
     /* best-effort (e.g. read-only fs) */
   }
 }
+
+function persistThreads() {
+  try {
+    writeFileSync(THREADS_FILE, JSON.stringify(threads, null, 2));
+  } catch {
+    /* best-effort */
+  }
+}
+
+const pairKey = (a, b) => [a, b].sort().join("__");
 
 export function all() {
   return users;
@@ -64,7 +76,7 @@ export function create(p = {}) {
     credits: 0,
     type: emptyAcc(), // what this user finds attractive (learned from votes)
     admirers: emptyAcc(), // who finds this user attractive
-    shares: [], // ids this user opted to share socials with
+    ratings: {}, // { otherId: { w, l } } revealed preference from matchups
     createdAt: new Date().toISOString(),
   };
   users.push(user);
@@ -93,8 +105,14 @@ export function update(id, p = {}) {
 export function remove(id) {
   const before = users.length;
   users = users.filter((u) => u.id !== id);
-  for (const u of users) u.shares = (u.shares || []).filter((s) => s !== id);
+  for (const u of users) {
+    if (u.ratings) delete u.ratings[id];
+  }
+  for (const key of Object.keys(threads)) {
+    if (key.split("__").includes(id)) delete threads[key];
+  }
   persist();
+  persistThreads();
   return users.length < before;
 }
 
@@ -107,36 +125,26 @@ export function addCredits(id, n) {
   return user;
 }
 
-// Opt in to share socials with `targetId`. Returns { mutual }.
-export function share(id, targetId) {
-  const user = get(id);
-  const target = get(targetId);
-  if (!user || !target || id === targetId) return null;
-  user.shares = user.shares || [];
-  if (!user.shares.includes(targetId)) user.shares.push(targetId);
-  persist();
-  return { mutual: (target.shares || []).includes(id) };
+// --- Messaging (unlocked only between mutually-matched users) ---
+
+export function thread(a, b) {
+  return threads[pairKey(a, b)] || [];
 }
 
-// Connections for a user: everyone they've opted to share with, with the
-// other person's socials revealed only when the opt-in is mutual.
-export function connections(id) {
-  const user = get(id);
-  if (!user) return null;
-  return (user.shares || [])
-    .map((tid) => {
-      const t = get(tid);
-      if (!t) return null;
-      const mutual = (t.shares || []).includes(id);
-      return {
-        id: t.id,
-        name: t.name,
-        photo: t.photo,
-        mutual,
-        socials: mutual ? t.socials : null, // hidden until they share back
-      };
-    })
-    .filter(Boolean);
+// Append a message. Caller must verify the two users are a mutual match.
+export function addMessage(from, to, text) {
+  const body = String(text || "").slice(0, 1000).trim();
+  if (!body) return null;
+  const key = pairKey(from, to);
+  (threads[key] || (threads[key] = [])).push({ from, text: body, at: new Date().toISOString() });
+  persistThreads();
+  return threads[key];
+}
+
+// Matched-user view: reveals socials, which mutual matching consents to.
+export function matchView(u) {
+  if (!u) return null;
+  return { id: u.id, name: u.name, photo: u.photo, age: u.age, gender: u.gender, socials: u.socials };
 }
 
 export function save() {

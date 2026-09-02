@@ -16,7 +16,7 @@ function show(view) {
   document.querySelector(`nav.tabs button[data-view="${view}"]`)?.classList.add("active");
   if (view === "matchup") loadMatchup();
   if (view === "report") loadReport();
-  if (view === "connections") loadConnections();
+  if (view === "matches") loadMatches();
   if (view === "games") renderGamePicker();
   window.scrollTo(0, 0);
 }
@@ -87,7 +87,7 @@ $("#onboard-form").addEventListener("submit", async (e) => {
   });
   setCredits(currentUser.credits);
   $("#tab-report").disabled = false;
-  $("#tab-conn").disabled = false;
+  $("#tab-matches").disabled = false;
   show("matchup");
 });
 
@@ -128,43 +128,76 @@ async function loadReport() {
     <div class="card"><p style="margin:0;font-size:17px">${esc(r.yourType.text)}</p></div>
     <div class="section-title">The type of person attracted to you</div>
     <div class="card">${traitList(r.likedBy)}</div>
-    <div class="section-title">Your matches <span class="hint">— mutual attraction</span></div>
-    <div class="cards">${r.topMatches.map(matchCard).join("") || `<p class="empty">Vote in some matchups to unlock matches.</p>`}</div>
+    <div class="section-title">Where you stand</div>
+    <div class="cards">
+      <div class="card"><div class="stat"><b>${r.matches.length}</b><span class="meta">mutual matches</span></div><button class="primary" style="width:100%" data-view="matches">open matches →</button></div>
+      <div class="card"><div class="stat"><b>${r.crushes}</b><span class="meta">you rated highly, no match back yet</span></div><span class="meta">keep rating — they might pick you too.</span></div>
+    </div>
+    <div class="section-title">Go rate these next <span class="hint">— predicted to like you back</span></div>
+    <div class="cards">${(r.suggestions || []).map((s) => `<div class="card"><h3>${esc(s.name)}</h3><span class="meta">predicted match ${s.score}</span></div>`).join("") || `<span class="meta">rate more photos to get suggestions</span>`}</div>
   `;
-  $("#report").querySelectorAll("[data-share]").forEach((b) =>
-    b.addEventListener("click", async () => {
-      const { mutual } = await post(`/api/users/${currentUser.id}/share`, { targetId: b.dataset.share });
-      b.textContent = mutual ? "matched — socials unlocked ✓" : "shared — waiting on them";
-      b.disabled = true;
-    })
-  );
-}
-function matchCard(m) {
-  return `<div class="card">
-    <h3>${esc(m.name)}</h3>
-    <div class="match-row"><span class="meta">mutual</span><span class="score">${m.score}</span></div>
-    <div class="meta">you → them ${m.youLikeThem} · them → you ${m.theyLikeYou}</div>
-    <button class="primary" style="width:100%;margin-top:10px" data-share="${m.id}">share my socials</button>
-  </div>`;
+  $("#report").querySelector("[data-view=matches]")?.addEventListener("click", () => show("matches"));
 }
 
-// --- connections ---
-async function loadConnections() {
-  if (!currentUser) return ($("#connections").innerHTML = `<p class="empty">Create a profile first.</p>`);
-  const conns = await api(`/api/users/${currentUser.id}/connections`);
-  $("#connections").innerHTML = conns.length
-    ? conns.map((c) => `<div class="card">
-        <h3>${esc(c.name)}</h3>
-        ${c.mutual
-          ? `<div class="meta">✓ matched — socials:</div>${socialLinks(c.socials)}`
-          : `<div class="meta">waiting on them to share back…</div>`}
+// --- matches + messaging ---
+async function loadMatches() {
+  $("#chat").hidden = true;
+  $("#matches-list").hidden = false;
+  if (!currentUser) return ($("#matches-list").innerHTML = `<p class="empty">Create a profile first.</p>`);
+  const matches = await api(`/api/users/${currentUser.id}/matches`);
+  $("#matches-list").innerHTML = matches.length
+    ? matches.map((m) => `<div class="card match-card" data-open="${m.user.id}" data-name="${esc(m.user.name)}">
+        ${avatar(m.user)}
+        <h3>${esc(m.user.name)}${m.user.age ? ", " + m.user.age : ""}</h3>
+        <div class="meta">you picked them ${m.youPickRate}% · they picked you ${m.theyPickRate}%</div>
+        ${socialLinks(m.user.socials)}
+        <button class="primary" style="width:100%;margin-top:10px">message →</button>
       </div>`).join("")
-    : `<p class="empty">No shares yet — open your report and tap “share my socials” on a match.</p>`;
+    : `<p class="empty">No matches yet. Rate photos in the Rate tab — a match happens when you both pick each other over others.</p>`;
+  $("#matches-list").querySelectorAll("[data-open]").forEach((el) =>
+    el.addEventListener("click", () => openChat(el.dataset.open, el.dataset.name))
+  );
 }
 function socialLinks(s) {
   const items = Object.entries(s || {}).map(([k, v]) => `<span class="pill">${esc(k)}: @${esc(v)}</span>`);
-  return items.join("") || `<span class="meta">none provided</span>`;
+  return items.length ? `<div style="margin:8px 0">${items.join("")}</div>` : "";
 }
+
+let chatWith = null;
+let chatTimer = null;
+async function openChat(otherId, name) {
+  chatWith = otherId;
+  $("#matches-list").hidden = true;
+  $("#chat").hidden = false;
+  $("#chat-header").innerHTML = `<h3 style="margin:0 0 10px">${esc(name)}</h3>`;
+  await refreshChat();
+  clearInterval(chatTimer);
+  chatTimer = setInterval(refreshChat, 3000); // poll for their replies
+}
+async function refreshChat() {
+  if (!chatWith || !currentUser) return;
+  const msgs = await api(`/api/users/${currentUser.id}/messages/${chatWith}`);
+  if (msgs.error) return;
+  const log = $("#chat-log");
+  log.innerHTML = msgs.length
+    ? msgs.map((m) => `<div class="msg ${m.from === currentUser.id ? "me" : "them"}">${esc(m.text)}</div>`).join("")
+    : `<p class="meta" style="text-align:center">Matched! Say hi 👋</p>`;
+  log.scrollTop = log.scrollHeight;
+}
+$("#chat-form").addEventListener("submit", async (e) => {
+  e.preventDefault();
+  const input = $("#chat-input");
+  const text = input.value.trim();
+  if (!text || !chatWith) return;
+  input.value = "";
+  await post(`/api/users/${currentUser.id}/messages/${chatWith}`, { text });
+  refreshChat();
+});
+$("#chat-back").addEventListener("click", () => {
+  clearInterval(chatTimer);
+  chatWith = null;
+  loadMatches();
+});
 
 // --- guessing games ---
 function renderGamePicker() {

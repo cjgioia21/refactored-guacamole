@@ -4,7 +4,7 @@ import { profileFromAnswers, QUESTIONS, AXES } from "../src/questions.js";
 import { similarity, emptyAcc } from "../src/vectors.js";
 import {
   updateElo, recordVote, percentile, matchScore, findMatches, guessOutcome,
-  report, typeSummary, attractedGenders, BASE_ELO,
+  report, typeSummary, attractedGenders, likes, mutualMatches, pickRate, BASE_ELO,
 } from "../src/engine.js";
 
 function mkUser(id, answers, extra = {}) {
@@ -108,15 +108,38 @@ test("typeSummary reflects learned preferences", () => {
   assert.match(s.text, /older/);
 });
 
-test("report exposes percentile, yourType, likedBy, matches", () => {
+test("likes reflects rating someone over others; pickRate is a fraction", () => {
+  const a = mkUser("a"), b = mkUser("b"), c = mkUser("c");
+  recordVote(a, b, c); // a picks b over c
+  assert.equal(likes(a, "b"), true);
+  assert.equal(likes(a, "c"), false);
+  assert.equal(pickRate(a, "b"), 1);
+});
+
+test("mutualMatches requires both to rate each other over others", () => {
+  const a = mkUser("a"), b = mkUser("b"), c = mkUser("c");
+  recordVote(a, b, c); // a likes b (not yet mutual)
+  assert.equal(mutualMatches(a, [a, b, c]).length, 0);
+  recordVote(b, a, c); // now b likes a -> mutual
+  const m = mutualMatches(a, [a, b, c]);
+  assert.equal(m.length, 1);
+  assert.equal(m[0].user.id, "b");
+  assert.ok(m[0].youPickRate > 0 && m[0].theyPickRate > 0);
+});
+
+test("report exposes percentile, yourType, mutual matches and crushes", () => {
   const a = mkUser("a", answersAll(0.6), { gender: "man" });
   const b = mkUser("b", answersAll(0.5), { gender: "woman" });
   const c = mkUser("c", answersAll(-0.6), { gender: "woman" });
   const pop = [a, b, c];
-  recordVote(a, b, c);
-  const r = report(a, pop);
-  assert.equal(r.id, "a");
-  assert.ok(typeof r.yourType.text === "string");
-  assert.ok(Array.isArray(r.likedBy) && Array.isArray(r.topMatches));
+  recordVote(a, b, c); // a likes b, not mutual yet
+  let r = report(a, pop);
+  assert.equal(r.matches.length, 0);
+  assert.equal(r.crushes, 1); // liked b, not matched back
+  recordVote(b, a, c); // mutual now
+  r = report(a, pop);
+  assert.equal(r.matches.length, 1);
+  assert.equal(r.matches[0].id, "b");
+  assert.ok(Array.isArray(r.likedBy) && typeof r.yourType.text === "string");
   assert.ok(r.attractivenessPercentile >= 0 && r.attractivenessPercentile <= 100);
 });
