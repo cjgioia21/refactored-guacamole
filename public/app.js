@@ -525,35 +525,32 @@ async function loadReport() {
   // The unsoftened numbers. This goes first, before anything reassuring.
   const brutal = brutalCard(r);
 
-  // The four mirrors.
-  const mirrors = compatibilityCard(r) + selfVsCrowdCard(r) + reciprocityCard(r) + scatterCard(r);
-
   // Human Nature score.
   const nature = natureCard(r);
 
   // Who Likes You?
   const fans = r.fans.unlocked ? fansCard(r.fans.report) : lockedFansCard(r.fans, r.credits);
 
-  // Your type + where you stand
-  const st = r.standing;
-  const standingTile = !st ? ""
-    : st.ranked
-      ? `<div class="card"><div class="stat"><b>#${st.rank.toLocaleString()}</b><span class="meta">of ${st.of.toLocaleString()} ranked · top ${st.percentile}%</span></div>
-           <button class="outline" style="width:100%;margin-top:8px" id="go-boards">open the Top 10 →</button></div>`
-      : `<div class="card"><div class="stat"><b>${st.toGo}</b><span class="meta">more matchups until you're ranked</span></div></div>`;
+  const yourType = `<div class="card"><p style="margin:0;font-size:17px">${esc(r.yourType.text)}</p></div>`;
+  const emailPref = `<label class="email-pref" style="margin-top:14px"><input type="checkbox" id="email-pref" ${r.emailOnNewData ? "checked" : ""}/> email me when new data is available</label>`;
 
-  const extra = `<div class="section-title">Your type <span class="hint">— learned from the photos you chose</span></div>
-    <div class="card"><p style="margin:0;font-size:17px">${esc(r.yourType.text)}</p></div>
-    <div class="cards">
-      ${standingTile}
-      <div class="card"><div class="stat"><b>${r.winRate == null ? "—" : r.winRate + "%"}</b><span class="meta">of your matchups end in a win</span></div></div>
-    </div>
-    <label class="email-pref" style="margin-top:14px"><input type="checkbox" id="email-pref" ${r.emailOnNewData ? "checked" : ""}/> email me when new data is available</label>`;
-
-  $("#report").innerHTML = trueNatureCard(r, p) + brutal + attract + mirrors + nature + tasteSection(r.taste) + guesses + fans + extra;
+  // One scroll, three acts. Nothing is hidden behind a tab — the uncomfortable
+  // cards still arrive by scrolling, they're just signposted on the way.
+  $("#report").innerHTML =
+      heroStrip(r)
+    + trueNatureCard(r, p)
+    + act("How you're seen")
+    + brutal + attract + guesses
+    + act("What you're like")
+    + nature + selfVsCrowdCard(r) + scatterCard(r)
+    + act("Who you want")
+    + compatibilityCard(r) + reciprocityCard(r) + tasteSection(r.taste) + yourType + fans
+    + emailPref;
 
   $("#tn-share")?.addEventListener("click", () => shareTrueNature(r));
   $("#go-boards")?.addEventListener("click", () => show("boards"));
+  $("#hero-rank")?.addEventListener("click", () => show("boards"));
+  $("#hero-nature")?.addEventListener("click", () => show("moral"));
   $("#go-moral")?.addEventListener("click", () => show("moral"));
   $("#buy-pairs")?.addEventListener("click", () => spendAction("/api/buy-pairs", {}, r.cost.pairs));
   $("#report").querySelectorAll("[data-reveal]").forEach((b) => b.addEventListener("click", () => spendAction("/api/reveal", { game: b.dataset.reveal }, r.cost.reveal)));
@@ -561,6 +558,23 @@ async function loadReport() {
   $("#unlock-fans")?.addEventListener("click", () => spendAction("/api/unlock-fans", {}, r.cost.fans));
   wireShortfalls($("#report"));
   $("#email-pref")?.addEventListener("change", (e) => post("/api/email-pref", { on: e.target.checked }));
+}
+
+const act = (label) => `<div class="panel-label">${esc(label)}</div>`;
+
+// Three numbers, before anything longer: where you rank, how often you win, and
+// what the morality quiz made of you. The one-glance version of the whole page.
+function heroStrip(r) {
+  const st = r.standing;
+  const rank = !st ? "—" : st.ranked ? `#${st.rank.toLocaleString()}` : "—";
+  const rankLabel = !st ? "not a participant" : st.ranked ? `of ${st.of.toLocaleString()} ranked` : `${st.toGo} matchups to go`;
+  const nature = r.nature?.answered ? `${r.nature.score > 0 ? "+" : ""}${r.nature.score}` : "—";
+  const natureLabel = r.nature?.answered ? esc(r.nature.verdict?.label || "human nature") : "quiz not taken";
+  return `<div class="report-hero">
+      <button class="rh" id="hero-rank"><b>${rank}</b><span>${rankLabel}</span></button>
+      <div class="rh"><b>${r.winRate == null ? "—" : r.winRate + "%"}</b><span>win rate</span></div>
+      <button class="rh" id="hero-nature"><b>${nature}</b><span>${natureLabel}</span></button>
+    </div>`;
 }
 
 // The numbers with the padding taken out: how often you actually win, where you

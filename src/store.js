@@ -180,7 +180,9 @@ export function idDocOf(id) {
 export function moderationQueue({ limit = 50 } = {}) {
   const byTime = (a, b) => String(a.photoSubmittedAt).localeCompare(String(b.photoSubmittedAt));
   return {
-    pending: users.filter((u) => u.photoStatus === "pending").sort(byTime).slice(0, limit),
+    // A voter has no photo, so there is nothing to review — only profiles that
+    // actually submitted an image belong in the queue.
+    pending: users.filter((u) => u.photoStatus === "pending" && u.photo).sort(byTime).slice(0, limit),
     decided: users
       .filter((u) => u.photoStatus !== "pending" && u.moderation?.reviewedAt)
       .sort((a, b) => String(b.moderation.reviewedAt).localeCompare(String(a.moderation.reviewedAt)))
