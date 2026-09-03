@@ -1,16 +1,25 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { profileFromAnswers, QUESTIONS, AXES } from "../src/questions.js";
+import { MORAL_QUESTIONS, moralScore, moralAnswered, moralVerdict, moralBreakdown, worstVice, MORAL_MIN_ANSWERED } from "../src/morality.js";
 import { similarity, emptyAcc } from "../src/vectors.js";
 import {
   updateElo, recordVote, percentile, matchScore, findMatches, guessOutcome,
   report, typeSummary, attractedGenders, likes, mutualMatches, pickRate,
   attractivenessBand, guessConsensus, fansReport, tasteReport, GAMES, TASTES, BASE_ELO, REVEAL_MIN,
+  canMatch, matchGates, nearMatches, NATURE_WINDOW, MIN_MUTUAL_PICKS, MORAL_MIN, quizDone, axisValue,
 } from "../src/engine.js";
 
+// Answer every morality question at the same signed value: -2 (saint) .. +2.
+const moralAll = (value) =>
+  Object.fromEntries(MORAL_QUESTIONS.map((q) => [q.id, q.options.findIndex((o) => o.value === value)]));
+
 function mkUser(id, answers, extra = {}) {
+  const moral = extra.moralAnswers ?? moralAll(0);
   return {
-    id, name: id, traits: profileFromAnswers(answers), elo: BASE_ELO,
+    id, name: id, traits: profileFromAnswers(answers),
+    moralAnswers: moral, natureScore: moralScore(moral), moralAnswered: moralAnswered(moral),
+    elo: BASE_ELO,
     matchups: 0, votesCast: 0, credits: 0, type: emptyAcc(), admirers: emptyAcc(),
     age: 28, gender: "woman", orientation: "straight", mentalHealth: [],
     guessesReceived: {}, fans: { n: 0, mh: {}, gender: {}, ageSum: 0, ageN: 0 }, ...extra,
@@ -132,15 +141,43 @@ test("likes reflects rating someone over others; pickRate is a fraction", () => 
   assert.equal(pickRate(a, "b"), 1);
 });
 
-test("mutualMatches requires both to rate each other over others", () => {
+test("mutualMatches requires both to rate each other over others, 3 times each", () => {
   const a = mkUser("a"), b = mkUser("b"), c = mkUser("c");
-  recordVote(a, b, c); // a likes b (not yet mutual)
+  for (let i = 0; i < 3; i++) recordVote(a, b, c); // a likes b (not yet mutual)
   assert.equal(mutualMatches(a, [a, b, c]).length, 0);
-  recordVote(b, a, c); // now b likes a -> mutual
+  for (let i = 0; i < MIN_MUTUAL_PICKS - 1; i++) recordVote(b, a, c);
+  assert.equal(mutualMatches(a, [a, b, c]).length, 0); // mutual, but short of 3 picks
+  recordVote(b, a, c); // third pick clears the gate
   const m = mutualMatches(a, [a, b, c]);
   assert.equal(m.length, 1);
   assert.equal(m[0].user.id, "b");
   assert.ok(m[0].youPickRate > 0 && m[0].theyPickRate > 0);
+  assert.equal(m[0].natureGap, 0);
+});
+
+test("a Human Nature gap wider than the window blocks an otherwise-mutual match", () => {
+  const a = mkUser("a", answersAll(1), { moralAnswers: moralAll(2) });
+  const b = mkUser("b", answersAll(-1), { moralAnswers: moralAll(-2) });
+  const c = mkUser("c");
+  assert.ok(Math.abs(a.natureScore - b.natureScore) > NATURE_WINDOW);
+  for (let i = 0; i < 3; i++) { recordVote(a, b, c); recordVote(b, a, c); }
+  assert.equal(canMatch(a, b), false);
+  const gates = matchGates(a, b);
+  assert.equal(gates.mutual, true);
+  assert.equal(gates.picks, true);
+  assert.equal(gates.nature, false);
+  // ...and it surfaces as an "almost" so the user knows why.
+  const near = nearMatches(a, [a, b, c]);
+  assert.equal(near.length, 1);
+  assert.equal(near[0].blockedBy, "nature");
+});
+
+test("canMatch clears once picks, the nature window and the quiz are all satisfied", () => {
+  const a = mkUser("a", answersAll(0.5)), b = mkUser("b", answersAll(0.5)), c = mkUser("c");
+  assert.equal(canMatch(a, b), false);
+  for (let i = 0; i < MIN_MUTUAL_PICKS; i++) { recordVote(a, b, c); recordVote(b, a, c); }
+  assert.equal(matchGates(a, b).natureGap, 0);
+  assert.equal(canMatch(a, b), true);
 });
 
 test("attractivenessBand narrows with more matchups", () => {
@@ -199,14 +236,74 @@ test("report exposes percentile, yourType, mutual matches and crushes", () => {
   const b = mkUser("b", answersAll(0.5), { gender: "woman" });
   const c = mkUser("c", answersAll(-0.6), { gender: "woman" });
   const pop = [a, b, c];
-  recordVote(a, b, c); // a likes b, not mutual yet
+  for (let i = 0; i < 3; i++) recordVote(a, b, c); // a likes b, not mutual yet
   let r = report(a, pop);
   assert.equal(r.matches.length, 0);
   assert.equal(r.crushes, 1); // liked b, not matched back
-  recordVote(b, a, c); // mutual now
+  for (let i = 0; i < 3; i++) recordVote(b, a, c); // mutual and past the pick gate
   r = report(a, pop);
   assert.equal(r.matches.length, 1);
   assert.equal(r.matches[0].id, "b");
   assert.ok(Array.isArray(r.likedBy) && typeof r.yourType.text === "string");
   assert.ok(r.attractivenessPercentile >= 0 && r.attractivenessPercentile <= 100);
+  assert.equal(typeof r.natureScore, "number");
+});
+
+test("moralScore spans -72..+72 and the verdict bands track it", () => {
+  assert.equal(MORAL_QUESTIONS.length, 36);
+  assert.equal(moralScore(moralAll(-2)), -72);
+  assert.equal(moralScore(moralAll(2)), 72);
+  assert.equal(moralScore({}), 0);
+  assert.equal(moralVerdict(-72).label, "Sanctimonious");
+  assert.equal(moralVerdict(72).label, "Irredeemable");
+  // Every option really is in -2..+2, or the 25-point window means nothing.
+  for (const q of MORAL_QUESTIONS) {
+    assert.equal(q.options.length, 5);
+    for (const o of q.options) assert.ok(Number.isInteger(o.value) && Math.abs(o.value) <= 2);
+  }
+});
+
+test("moralBreakdown splits the score across all six vices", () => {
+  const b = moralBreakdown(moralAll(2));
+  assert.deepEqual(Object.keys(b).sort(), ["apathy", "betrayal", "cruelty", "deceit", "depravity", "greed"]);
+  for (const row of Object.values(b)) { assert.equal(row.answered, 6); assert.equal(row.score, 12); }
+  assert.equal(Object.values(b).reduce((n, r) => n + r.score, 0), 72);
+  assert.equal(worstVice(moralAll(2)).answered, 6);
+});
+
+test("skipping the morality quiz blocks a match no matter how much you pick each other", () => {
+  const a = mkUser("a", undefined, { moralAnswers: {} });
+  const b = mkUser("b", undefined, { moralAnswers: {} });
+  const c = mkUser("c");
+  assert.equal(quizDone(a), false);
+  assert.equal(a.natureScore, b.natureScore); // both 0 — would match without the gate
+  for (let i = 0; i < 5; i++) { recordVote(a, b, c); recordVote(b, a, c); }
+  const gates = matchGates(a, b);
+  assert.equal(gates.mutual, true);
+  assert.equal(gates.picks, true);
+  assert.equal(gates.nature, true);
+  assert.equal(gates.quiz, false);
+  assert.equal(canMatch(a, b), false);
+  assert.equal(nearMatches(a, [a, b, c])[0].blockedBy, "your-quiz");
+});
+
+test("a partly-finished quiz still counts once it passes the minimum", () => {
+  const partial = {};
+  MORAL_QUESTIONS.slice(0, MORAL_MIN_ANSWERED).forEach((q) => { partial[q.id] = 2; });
+  const u = mkUser("p", undefined, { moralAnswers: partial });
+  assert.equal(moralAnswered(partial), MORAL_MIN_ANSWERED);
+  assert.equal(quizDone(u), true);
+  const oneShort = { ...partial };
+  delete oneShort[MORAL_QUESTIONS[0].id];
+  assert.equal(quizDone(mkUser("q", undefined, { moralAnswers: oneShort })), false);
+});
+
+test("the morality guessing axis reads the Human Nature score, not the trait vector", () => {
+  const evil = mkUser("e", answersAll(0), { moralAnswers: moralAll(2) });
+  const saint = mkUser("s", answersAll(0), { moralAnswers: moralAll(-2) });
+  assert.equal(axisValue(evil, "moral"), 72);
+  assert.equal(axisValue(saint, "moral"), -72);
+  assert.equal(guessOutcome(evil, "moral", "high").correct, true);
+  assert.equal(guessOutcome(saint, "moral", "high").correct, false);
+  assert.equal(guessOutcome(saint, "moral", "low").actualLabel, "the better person");
 });

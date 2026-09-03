@@ -5,6 +5,7 @@
 // attractive people are TO EACH OTHER.
 import { AXES, axisLabel } from "./questions.js";
 import { similarity, accumulate } from "./vectors.js";
+import { MORAL_MIN_ANSWERED } from "./morality.js";
 
 export const ELO_K = 32;
 export const BASE_ELO = 1200;
@@ -92,11 +93,51 @@ export function pickRate(user, otherId) {
   return r.w / (r.w + r.l);
 }
 
-// A match is mutual revealed preference: both rated each other over others.
-// This is what unlocks messaging between two users.
+// ---------- Match gating ----------
+// A match is deliberately hard to earn: mutual revealed preference, repeated
+// enough times to not be a fluke, between two people whose Human Nature scores
+// are close enough that they'd actually stand each other.
+export const NATURE_WINDOW = 25; // max |a.natureScore - b.natureScore|
+export const MIN_MUTUAL_PICKS = 3; // each must have picked the other this often
+// Both people must have actually taken the morality quiz. Without this, two
+// people who skipped it both sit at score 0 and match instantly — which would
+// hand out matches to exactly the people the score is meant to filter.
+export const MORAL_MIN = MORAL_MIN_ANSWERED;
+export const quizDone = (u) => (u?.moralAnswered || 0) >= MORAL_MIN;
+
+export function natureGap(a, b) {
+  return Math.abs((a.natureScore || 0) - (b.natureScore || 0));
+}
+
+// Every gate, evaluated separately so the UI can explain what's still missing.
+export function matchGates(a, b) {
+  const you = a.ratings?.[b.id] || { w: 0, l: 0 };
+  const them = b.ratings?.[a.id] || { w: 0, l: 0 };
+  const gap = natureGap(a, b);
+  return {
+    mutual: likes(a, b.id) && likes(b, a.id),
+    picks: you.w >= MIN_MUTUAL_PICKS && them.w >= MIN_MUTUAL_PICKS,
+    nature: gap <= NATURE_WINDOW,
+    quiz: quizDone(a) && quizDone(b),
+    yourQuiz: quizDone(a),
+    theirQuiz: quizDone(b),
+    yourPicks: you.w,
+    theirPicks: them.w,
+    natureGap: gap,
+  };
+}
+
+export function canMatch(a, b) {
+  if (!a || !b || a.id === b.id) return false;
+  const g = matchGates(a, b);
+  return g.mutual && g.picks && g.nature && g.quiz;
+}
+
+// A match is mutual revealed preference that clears every gate above.
+// This is what reveals two users' socials to each other.
 export function mutualMatches(user, population, { limit = 20 } = {}) {
   return population
-    .filter((o) => o.id !== user.id && likes(user, o.id) && likes(o, user.id))
+    .filter((o) => canMatch(user, o))
     .map((o) => {
       const you = user.ratings[o.id];
       const them = o.ratings[user.id];
@@ -105,9 +146,32 @@ export function mutualMatches(user, population, { limit = 20 } = {}) {
         strength: you.w - you.l + (them.w - them.l),
         youPickRate: Math.round(pickRate(user, o.id) * 100),
         theyPickRate: Math.round(pickRate(o, user.id) * 100),
+        yourPicks: you.w,
+        theirPicks: them.w,
+        natureGap: natureGap(user, o),
       };
     })
     .sort((a, b) => b.strength - a.strength)
+    .slice(0, limit);
+}
+
+// People you both like but who don't clear the remaining gates yet — shown so
+// a user knows a match is *close* and what it's waiting on.
+export function nearMatches(user, population, { limit = 10 } = {}) {
+  return population
+    .filter((o) => o.id !== user.id && likes(user, o.id) && likes(o, user.id) && !canMatch(user, o))
+    .map((o) => {
+      const g = matchGates(user, o);
+      return {
+        user: o,
+        yourPicks: g.yourPicks,
+        theirPicks: g.theirPicks,
+        natureGap: g.natureGap,
+        // Report the gate they can actually do something about first.
+        blockedBy: !g.yourQuiz ? "your-quiz" : !g.theirQuiz ? "their-quiz" : !g.nature ? "nature" : "picks",
+        picksToGo: Math.max(0, MIN_MUTUAL_PICKS - g.yourPicks),
+      };
+    })
     .slice(0, limit);
 }
 
@@ -215,6 +279,7 @@ export function report(user, population) {
     matchups: user.matchups || 0,
     elo: Math.round(user.elo),
     attractivenessPercentile: percentile(user, population),
+    natureScore: user.natureScore || 0,
     likedBy: describe(user.admirers.vector), // trait profile of admirers
     yourType: typeSummary(user), // learned from the photos you chose
     selfTraits: describe(user.traits),
@@ -225,9 +290,17 @@ export function report(user, population) {
       photo: m.user.photo,
       youPickRate: m.youPickRate,
       theyPickRate: m.theyPickRate,
+      natureGap: m.natureGap,
     })),
     // People you rated highly who haven't matched you back yet.
     crushes: population.filter((o) => o.id !== user.id && likes(user, o.id) && !likes(o, user.id)).length,
+    // Both of you like each other but a gate isn't cleared yet.
+    // The photo is left off here: only the server can mint a viewer-bound
+    // photo URL, so it decorates these before they go out.
+    almost: nearMatches(user, population, { limit: 6 }).map((m) => ({
+      id: m.user.id, name: m.user.name,
+      blockedBy: m.blockedBy, picksToGo: m.picksToGo, natureGap: m.natureGap,
+    })),
     // Suggested profiles (predicted mutual attraction) to go rate next.
     suggestions: findMatches(user, population, { limit: 4 }).map((m) => ({
       id: m.user.id,
@@ -251,6 +324,11 @@ export function guessOutcome(target, axis, guess) {
     const has = (target.mentalHealth || []).some((f) => f !== "none");
     return { correct: guess === (has ? "yes" : "no"), actual: has ? "yes" : "no", actualLabel: (target.mentalHealth || ["none"]).join(", ") };
   }
+  if (axis === "moral") {
+    const score = target.natureScore || 0;
+    const truth = score >= 0 ? "high" : "low";
+    return { correct: guess === truth, actual: truth, actualLabel: score >= 0 ? "the worse person" : "the better person", strength: Math.abs(score) / 72 };
+  }
   const value = target.traits[axis] || 0;
   const [low, high] = AXES[axis];
   const truth = value >= 0 ? "high" : "low";
@@ -272,7 +350,21 @@ export const GAMES = [
     title: "Guess who is more dominant (in the bedroom)", poles: ["more submissive", "more dominant"] },
   { key: "gooner", label: "Gooner Nature", emoji: "💦", axis: "gooner", selfQ: "gn1",
     title: "Guess who is more of a gooner", poles: ["more tame", "more of a gooner"] },
+  // Scored off the morality quiz rather than a trait axis — see axisValue().
+  { key: "morality", label: "Who's worse", emoji: "😈", axis: "moral", selfQ: "gr1", selfBank: "moral",
+    title: "Guess who scored worse on the morality quiz", poles: ["the better person", "the worse person"] },
 ];
+
+// The comparable value behind a guessing axis. Trait axes read the -1..1 trait
+// vector; the morality axis reads the Human Nature score instead, so the same
+// two-photo comparison round works for both.
+export function axisValue(user, axis) {
+  if (axis === "moral") return user?.natureScore || 0;
+  return user?.traits?.[axis] || 0;
+}
+
+// Axes a two-photo comparison round can be played on.
+export const VERSUS_AXES = [...Object.keys(AXES), "moral"];
 export const gameByKey = (k) => GAMES.find((g) => g.key === k) || null;
 
 // ---------- "Your taste": what your rating choices reveal about your type ----------

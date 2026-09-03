@@ -2,6 +2,10 @@
 import { readFileSync, writeFileSync, existsSync } from "node:fs";
 import { randomUUID } from "node:crypto";
 import { profileFromAnswers } from "./questions.js";
+import { moralScore, moralAnswered, moralBreakdown, moralVerdict, worstVice, MORAL_QUESTIONS } from "./morality.js";
+import { screen } from "./moderation.js";
+import * as photos from "./photos.js";
+import { urlFor } from "./phototokens.js";
 import { emptyAcc } from "./vectors.js";
 import { BASE_ELO } from "./engine.js";
 import { dataFile } from "./paths.js";
@@ -37,7 +41,7 @@ export function byAccount(accountId) {
   return users.find((u) => u.accountId === accountId) || null;
 }
 
-const PHOTO_MAX = 300000; // allow small uploaded data: URLs (downscaled client-side)
+// Profiles store a photo *id*; the bytes live encrypted in src/photos.js.
 const cleanFlags = (v) =>
   (Array.isArray(v) ? v : []).map((x) => String(x).toLowerCase().trim()).filter(Boolean);
 const predict = (v) => (v == null || v === "" ? null : Math.max(0, Math.min(100, Number(v))));
@@ -57,7 +61,7 @@ export function create(p = {}) {
     id: randomUUID(),
     accountId: p.accountId || null, // owning login account
     name: String(p.name || "Anonymous").slice(0, 80),
-    photo: String(p.photo || "").slice(0, PHOTO_MAX), // URL or uploaded data: URL
+    photo: p.photo || null, // photo id (see src/photos.js), never image bytes
     age: Number(p.age) || null,
     gender: p.gender || null, // man | woman | nonbinary (base, for matching)
     genderIdentity: p.genderIdentity || null, // e.g. woman-trans, nb-afab
@@ -68,6 +72,15 @@ export function create(p = {}) {
     socials: normSocials(p.socials), // PRIVATE — revealed only to a mutual match
     answers: p.answers || {},
     traits: profileFromAnswers(p.answers || {}),
+    moralAnswers: p.moralAnswers || {}, // the morality quiz — separate bank
+    natureScore: moralScore(p.moralAnswers || {}), // Human Nature score: -72..+72
+    moralAnswered: moralAnswered(p.moralAnswers || {}),
+    confirmedAdult: p.confirmedAdult !== false, // ticked the "I am 18 or older" box
+    // Moderation: a photo is never visible to others until an admin approves it.
+    photoStatus: "pending", // pending | approved | rejected
+    moderation: { flags: [], reason: null, reviewedBy: null, reviewedAt: null },
+    photoSubmittedAt: new Date().toISOString(),
+    accountLocked: false, // set by an admin "escalate" — blocks re-uploading
     elo: BASE_ELO,
     matchups: 0,
     votesCast: 0,
@@ -84,17 +97,81 @@ export function create(p = {}) {
     priorityPairs: 0, // extra matchup priority purchased
     createdAt: new Date().toISOString(),
   };
+  applyScreen(user);
   users.push(user);
   persist();
   return user;
 }
 
+// Run automated screening and store its verdict. Screening can only reject or
+// flag — approval always requires an admin.
+function applyScreen(user) {
+  const verdict = screen(user);
+  user.moderation = {
+    flags: verdict.flags || [],
+    reason: verdict.reason || null,
+    reviewedBy: null,
+    reviewedAt: null,
+  };
+  user.photoStatus = verdict.autoReject ? "rejected" : "pending";
+  if (verdict.autoReject) user.moderation.reviewedBy = "auto";
+  return user;
+}
+
+// An admin decision on a photo: approve | reject | escalate (reject + lock).
+export function moderatePhoto(id, action, reason, adminEmail) {
+  const user = get(id);
+  if (!user) return null;
+  const mod = user.moderation || (user.moderation = { flags: [], reason: null });
+  mod.reason = reason ? String(reason).slice(0, 300) : null;
+  mod.reviewedBy = adminEmail || "admin";
+  mod.reviewedAt = new Date().toISOString();
+  if (action === "approve") {
+    user.photoStatus = "approved";
+    user.accountLocked = false;
+  } else {
+    user.photoStatus = "rejected";
+    user.accountLocked = action === "escalate";
+    // A rejected photo is deleted, not merely hidden. Keeping it would mean
+    // storing images a reviewer has already judged unacceptable.
+    if (user.photo) { photos.remove(user.photo); user.photo = null; }
+  }
+  persist();
+  return user;
+}
+
+// Profiles awaiting review, oldest first, plus recently decided ones.
+export function moderationQueue({ limit = 50 } = {}) {
+  const byTime = (a, b) => String(a.photoSubmittedAt).localeCompare(String(b.photoSubmittedAt));
+  return {
+    pending: users.filter((u) => u.photoStatus === "pending").sort(byTime).slice(0, limit),
+    decided: users
+      .filter((u) => u.photoStatus !== "pending" && u.moderation?.reviewedAt)
+      .sort((a, b) => String(b.moderation.reviewedAt).localeCompare(String(a.moderation.reviewedAt)))
+      .slice(0, limit),
+  };
+}
+
+// Only approved photos are ever shown to other users.
+export function visible() {
+  return users.filter((u) => u.photoStatus === "approved");
+}
+
 export function update(id, p = {}) {
   const user = get(id);
   if (!user) return null;
+  if (user.accountLocked) return user; // escalated accounts can't re-submit
   if (p.name != null) user.name = String(p.name).slice(0, 80);
-  if (p.photo != null) user.photo = String(p.photo).slice(0, PHOTO_MAX);
+  let photoChanged = false;
+  if (p.photo != null) {
+    const next = p.photo || null;
+    photoChanged = next !== user.photo;
+    // Replacing a photo shreds the old blob rather than orphaning it on disk.
+    if (photoChanged && user.photo) photos.remove(user.photo);
+    user.photo = next;
+  }
   if (p.age != null) user.age = Number(p.age) || null;
+  if (p.confirmedAdult != null) user.confirmedAdult = !!p.confirmedAdult;
   if (p.gender != null) user.gender = p.gender;
   if (p.genderIdentity != null) user.genderIdentity = p.genderIdentity;
   if (p.orientation != null) user.orientation = p.orientation;
@@ -106,22 +183,41 @@ export function update(id, p = {}) {
     user.answers = { ...(user.answers || {}), ...p.answers }; // merge, don't clobber
     user.traits = profileFromAnswers(user.answers);
   }
+  if (p.moralAnswers != null) {
+    user.moralAnswers = { ...(user.moralAnswers || {}), ...p.moralAnswers };
+    user.natureScore = moralScore(user.moralAnswers);
+    user.moralAnswered = moralAnswered(user.moralAnswers);
+  }
+  // A new photo (or a new age claim) invalidates any prior approval.
+  if (photoChanged || p.age != null) {
+    user.photoSubmittedAt = new Date().toISOString();
+    applyScreen(user);
+  }
   persist();
   return user;
 }
 
-// Merge a single questionnaire answer and recompute the trait vector.
-export function setAnswer(id, qid, optionIndex) {
+// Merge a single answer from either question bank and recompute what it feeds:
+// the taste bank drives the trait vector, the morality bank drives the score.
+export function setAnswer(id, qid, optionIndex, bank = "traits") {
   const user = get(id);
   if (!user) return null;
-  user.answers = { ...(user.answers || {}), [qid]: Number(optionIndex) };
-  user.traits = profileFromAnswers(user.answers);
+  if (bank === "moral") {
+    user.moralAnswers = { ...(user.moralAnswers || {}), [qid]: Number(optionIndex) };
+    user.natureScore = moralScore(user.moralAnswers);
+    user.moralAnswered = moralAnswered(user.moralAnswers);
+  } else {
+    user.answers = { ...(user.answers || {}), [qid]: Number(optionIndex) };
+    user.traits = profileFromAnswers(user.answers);
+  }
   persist();
   return user;
 }
 
 export function remove(id) {
   const before = users.length;
+  const user = get(id);
+  if (user?.photo) photos.remove(user.photo);
   users = users.filter((u) => u.id !== id);
   for (const u of users) if (u.ratings) delete u.ratings[id];
   persist();
@@ -194,9 +290,23 @@ export function guessStats(id) {
 }
 
 // Matched-user view: reveals socials, which a mutual match consents to.
-export function matchView(u) {
+export function matchView(u, viewerId) {
   if (!u) return null;
-  return { id: u.id, name: u.name, photo: u.photo, age: u.age, gender: u.gender, socials: u.socials };
+  return { id: u.id, name: u.name, photoUrl: urlFor(u.photo, viewerId), age: u.age, gender: u.gender, socials: u.socials, natureScore: u.natureScore || 0 };
+}
+
+// The morality report for a profile owner: score, verdict, per-vice breakdown.
+export function moralReport(u) {
+  const answers = u?.moralAnswers || {};
+  return {
+    score: u?.natureScore || 0,
+    answered: u?.moralAnswered || 0,
+    total: MORAL_QUESTIONS.length,
+    complete: (u?.moralAnswered || 0) >= MORAL_QUESTIONS.length,
+    verdict: moralVerdict(u?.natureScore || 0),
+    breakdown: moralBreakdown(answers),
+    worst: (u?.moralAnswered || 0) ? worstVice(answers) : null,
+  };
 }
 
 export function save() {
@@ -204,12 +314,13 @@ export function save() {
 }
 
 // Public shape — never leaks answers, accumulators, or socials.
-export function publicView(u) {
+export function publicView(u, viewerId) {
   if (!u) return null;
   return {
     id: u.id,
     name: u.name,
-    photo: u.photo,
+    // A short-lived URL bound to this viewer — never the photo id or its bytes.
+    photoUrl: urlFor(u.photo, viewerId),
     age: u.age,
     gender: u.gender,
     orientation: u.orientation,
@@ -217,5 +328,43 @@ export function publicView(u) {
     matchups: u.matchups || 0,
     credits: u.credits || 0,
     votesCast: u.votesCast || 0,
+    photoStatus: u.photoStatus || "pending",
+    natureScore: u.natureScore || 0,
+    moralAnswered: u.moralAnswered || 0,
+  };
+}
+
+// The owner's own view: adds the moderation verdict and score breakdown.
+export function ownerView(u, viewerId) {
+  if (!u) return null;
+  return {
+    ...publicView(u, viewerId),
+    hasPhoto: !!u.photo,
+    accountLocked: !!u.accountLocked,
+    moderation: {
+      flags: u.moderation?.flags || [],
+      reason: u.moderation?.reason || null,
+      reviewedAt: u.moderation?.reviewedAt || null,
+    },
+    moralAnswered: u.moralAnswered || 0,
+    moralTotal: MORAL_QUESTIONS.length,
+  };
+}
+
+// Admin queue view: everything a reviewer needs to judge a photo.
+export function adminView(u, viewerId) {
+  if (!u) return null;
+  return {
+    id: u.id,
+    name: u.name,
+    photoUrl: urlFor(u.photo, viewerId),
+    age: u.age,
+    gender: u.gender,
+    genderIdentity: u.genderIdentity,
+    photoStatus: u.photoStatus || "pending",
+    photoSubmittedAt: u.photoSubmittedAt || u.createdAt,
+    accountLocked: !!u.accountLocked,
+    moderation: u.moderation || { flags: [], reason: null },
+    createdAt: u.createdAt,
   };
 }

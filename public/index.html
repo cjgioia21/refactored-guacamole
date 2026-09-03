@@ -46,6 +46,7 @@
       <section id="view-onboard" class="view">
         <h2>Add your photo 🖼️</h2>
         <p class="sub">Put your own face into the game — and find out how people read it.</p>
+        <div id="photo-status" hidden></div>
         <form id="onboard-form">
           <div class="card">
             <h3>Submit a photo and get a detailed report of how you're seen</h3>
@@ -137,10 +138,12 @@
 
           <div class="panel-label">Your profile</div>
           <div class="mini-tiles">
+            <button class="mini-tile" data-view="moral"><b>Morality quiz <span id="moral-badge" class="badge" hidden>!</span></b><span id="moral-meta">get your score →</span></button>
             <button class="mini-tile" data-view="report"><b>Your report</b><span>how you're seen →</span></button>
             <button class="mini-tile" data-view="matches"><b>Matches <span id="match-badge" class="badge" hidden>0</span></b><span>socials unlock →</span></button>
             <button class="mini-tile" data-view="buy"><b>Buy credits</b><span>more data, faster →</span></button>
             <button class="mini-tile" id="edit-profile"><b>Your photo</b><span id="photo-meta">manage →</span></button>
+            <button class="mini-tile" data-view="admin" id="admin-tile" hidden><b>Photo review</b><span id="admin-meta">approve photos →</span></button>
           </div>
 
           <div class="refer">
@@ -189,6 +192,24 @@
         <p class="privacy-note">Demo checkout — no real payment is taken; the credits are granted instantly. Wire a payment processor for live billing.</p>
       </section>
 
+      <!-- The morality quiz -->
+      <section id="view-moral" class="view">
+        <button class="back" data-view="home">← home</button>
+        <h1 class="display-title">What kind of<br><b>person are you</b></h1>
+        <p class="sub">36 questions. Nobody sees your answers — only the number they produce. Answer honestly; the score is worthless otherwise, and it decides who you can match with.</p>
+        <div class="quiz-progress"><div class="progress"><i id="moral-bar"></i></div><span id="moral-count">0 / 36</span></div>
+        <div id="moral-verdict"></div>
+        <div id="moral-questions"></div>
+      </section>
+
+      <!-- Admin: photo approval queue -->
+      <section id="view-admin" class="view">
+        <button class="back" data-view="home">← home</button>
+        <h2>Photo review</h2>
+        <p class="sub">Nothing goes live until you approve it. <b>Escalate</b> rejects the photo and locks the account so they can't re-upload.</p>
+        <div id="admin-queue"></div>
+      </section>
+
       <!-- Guessing game play -->
       <section id="view-games" class="view">
         <button class="back" data-view="home">← home</button>
@@ -202,6 +223,7 @@
       <button data-view="matchup">Rate</button>
       <button data-view="report">Report</button>
       <button data-view="matches">Matches</button>
+      <button data-view="admin" id="tab-admin" hidden>Review</button>
     </nav>
   </div>
 

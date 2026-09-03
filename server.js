@@ -6,10 +6,21 @@ import { randomBytes } from "node:crypto";
 import * as store from "./src/store.js";
 import * as auth from "./src/auth.js";
 import { QUESTIONS, AXES } from "./src/questions.js";
+import { MORAL_QUESTIONS, VICES, MORAL_MIN_ANSWERED } from "./src/morality.js";
+import * as confessions from "./src/confessions.js";
+import * as photos from "./src/photos.js";
+import * as phototokens from "./src/phototokens.js";
 import {
   recordVote, report, guessOutcome, matchScore, mutualMatches, likes,
   GAMES, gameByKey, attractivenessBand, guessConsensus, fansReport, tasteReport, TASTES,
+  NATURE_WINDOW, MIN_MUTUAL_PICKS, canMatch, matchGates, quizDone, axisValue, VERSUS_AXES,
 } from "./src/engine.js";
+
+// Admin accounts, by email — set ADMIN_EMAILS="you@example.com,other@example.com".
+const ADMIN_EMAILS = new Set(
+  (process.env.ADMIN_EMAILS || "").split(",").map((e) => e.trim().toLowerCase()).filter(Boolean)
+);
+const isAdmin = (account) => !!account && ADMIN_EMAILS.has(String(account.email || "").toLowerCase());
 
 // Credit economy
 const COST = { reveal: 30, pairs: 75, fans: 300 };
@@ -31,11 +42,54 @@ const HOST = process.env.HOST || "0.0.0.0";
 if (process.env.NODE_ENV === "production") app.set("trust proxy", 1);
 
 app.use(express.json({ limit: "1mb" })); // room for small uploaded data: URLs
+
+// ---------- Photos ----------
+// No stable URL: every link is an HMAC over (photoId, viewerAccountId, expiry),
+// good for ten minutes and useless in anyone else's session. See
+// src/phototokens.js for why this is the control that matters most here.
+app.get("/photos/:id", (req, res) => {
+  const id = req.params.id;
+  const account = auth.currentAccount(req);
+  // Signed-in only. An unauthenticated request can't hold a valid token anyway,
+  // but failing here keeps photos out of reach of anything crawling the site.
+  if (!account) return res.status(401).end();
+  if (!photos.isPhotoId(id)) return res.status(404).end();
+  if (!phototokens.verify(req.query.t, id, account.id)) return res.status(403).end();
+  if (!phototokens.spendBudget(account.id)) return res.status(429).end();
+
+  const buf = photos.get(id);
+  if (!buf) return res.status(404).end();
+  res.set({
+    "Content-Type": "image/jpeg",
+    "Content-Length": String(buf.length),
+    // Private to this viewer, never stored by a shared cache, never indexed.
+    "Cache-Control": "private, no-store, max-age=0",
+    "X-Robots-Tag": "noindex, noimageindex, nofollow",
+    "Content-Security-Policy": "default-src 'none'; sandbox",
+    "X-Content-Type-Options": "nosniff",
+    "Cross-Origin-Resource-Policy": "same-origin",
+  });
+  res.end(buf);
+});
+
 app.use(express.static(join(__dirname, "public")));
 
 const CREDIT_PER_VOTES = 50; // 1 credit per 50 ratings — credits are scarce
-const GUESS_AXES = [...Object.keys(AXES), "age", "gender", "mh"];
+const GUESS_AXES = [...VERSUS_AXES, "age", "gender", "mh"];
 const oauthStates = new Set();
+
+// Where a finished score sits against everyone else who finished the quiz.
+// Null until the user has taken enough of it for the number to mean anything.
+function moralPercentile(me, population) {
+  if (!quizDone(me)) return null;
+  const scores = population.filter((u) => u.id !== me.id && quizDone(u)).map((u) => u.natureScore || 0);
+  if (scores.length < 3) return null;
+  const worse = scores.filter((s) => s < (me.natureScore || 0)).length;
+  return Math.round((worse / scores.length) * 100);
+}
+
+// Who is asking. Photo URLs are minted for this id and work for nobody else.
+const viewerId = (req) => auth.currentAccount(req)?.id || null;
 
 // Resolve the signed-in account's profile (or null).
 function myProfile(req) {
@@ -50,6 +104,14 @@ function requireProfile(req, res, next) {
   if (!profile) return res.status(409).json({ error: "no profile yet" });
   req.account = account;
   req.profile = profile;
+  next();
+}
+// Require an admin account (ADMIN_EMAILS). 401/403 otherwise.
+function requireAdmin(req, res, next) {
+  const account = auth.currentAccount(req);
+  if (!account) return res.status(401).json({ error: "not authenticated" });
+  if (!isAdmin(account)) return res.status(403).json({ error: "not an admin" });
+  req.account = account;
   next();
 }
 
@@ -101,48 +163,104 @@ app.get("/api/me", (req, res) => {
   const account = auth.currentAccount(req);
   if (!account) return res.status(401).json({ error: "not authenticated" });
   const profile = account.profileId ? store.get(account.profileId) : null;
-  res.json({ account: auth.publicAccount(account), profile: profile ? store.publicView(profile) : null });
+  res.json({
+    account: auth.publicAccount(account),
+    isAdmin: isAdmin(account),
+    profile: profile ? store.ownerView(profile, account.id) : null,
+  });
 });
 
 // ---------- Questionnaire / meta ----------
 app.get("/api/questions", (_req, res) => res.json({ questions: QUESTIONS, axes: AXES }));
+
+// ---------- The morality quiz (feeds the Human Nature score) ----------
+app.get("/api/moral-questions", (req, res) => {
+  const me = myProfile(req);
+  res.json({
+    questions: MORAL_QUESTIONS,
+    vices: VICES,
+    answers: me?.moralAnswers || {},
+    answered: me?.moralAnswered || 0,
+    minAnswered: MORAL_MIN_ANSWERED,
+  });
+});
+
+// Answer one question. Responds with what everyone else said — the whole point.
+app.post("/api/moral-answer", requireProfile, (req, res) => {
+  const qid = String(req.body?.qid || "");
+  const i = Number(req.body?.i);
+  const q = MORAL_QUESTIONS.find((x) => x.id === qid);
+  if (!q || !q.options[i]) return res.status(400).json({ error: "unknown question" });
+  const previous = req.profile.moralAnswers?.[qid];
+  store.setAnswer(req.profile.id, qid, i, "moral");
+  const stats = confessions.record(qid, i, previous === i ? null : previous);
+  res.json({
+    ok: true,
+    stats,
+    score: req.profile.natureScore,
+    answered: req.profile.moralAnswered,
+    total: MORAL_QUESTIONS.length,
+  });
+});
 app.get("/api/meta", (_req, res) =>
   res.json({ axes: AXES, guessAxes: GUESS_AXES, games: GAMES, cost: COST, pairsAmount: PAIRS_AMOUNT,
     tastes: TASTES.map((t) => ({ key: t.key, title: t.title, unlockAt: t.unlockAt })),
-    creditPerVotes: CREDIT_PER_VOTES, game: { rounds: GAME_ROUNDS, need: GAME_NEED, reward: GAME_REWARD } })
+    creditPerVotes: CREDIT_PER_VOTES,
+    match: { natureWindow: NATURE_WINDOW, minPicks: MIN_MUTUAL_PICKS, minQuiz: MORAL_MIN_ANSWERED },
+    vices: VICES, moralTotal: MORAL_QUESTIONS.length,
+    game: { rounds: GAME_ROUNDS, need: GAME_NEED, reward: GAME_REWARD } })
 );
 
 // ---------- Profile (owned by the session account) ----------
-app.post("/api/profile", (req, res) => {
+app.post("/api/profile", async (req, res) => {
   const account = auth.currentAccount(req);
   if (!account) return res.status(401).json({ error: "not authenticated" });
+
+  // Image bytes never reach the profile store. They're sanitized (re-encoded,
+  // EXIF/GPS destroyed) and encrypted first; what's stored is just an id.
+  const body = { ...(req.body || {}) };
+  if (body.photo) {
+    try {
+      body.photo = await photos.put(body.photo);
+    } catch (err) {
+      if (err instanceof photos.PhotoError) return res.status(400).json({ error: err.message });
+      throw err;
+    }
+  } else {
+    delete body.photo; // editing without re-uploading keeps the existing photo
+  }
   let profile;
   if (account.profileId && store.get(account.profileId)) {
-    profile = store.update(account.profileId, req.body || {});
+    const existing = store.get(account.profileId);
+    if (existing.accountLocked) return res.status(403).json({ error: "account locked by moderation" });
+    profile = store.update(account.profileId, body);
   } else {
-    profile = store.create({ ...req.body, accountId: account.id });
+    profile = store.create({ ...body, accountId: account.id });
     auth.linkProfile(account.id, profile.id);
   }
-  res.status(201).json(store.publicView(profile));
+  if (profile.photoStatus === "rejected") {
+    return res.status(422).json({ error: profile.moderation?.reason || "photo rejected", profile: store.ownerView(profile, account.id) });
+  }
+  res.status(201).json(store.ownerView(profile, account.id));
 });
 
-app.get("/api/users", (_req, res) => res.json(store.all().map(store.publicView)));
+app.get("/api/users", (req, res) => res.json(store.visible().map((u) => store.publicView(u, viewerId(req)))));
 app.get("/api/users/:id", (req, res) => {
   const u = store.get(req.params.id);
   if (!u) return res.status(404).json({ error: "not found" });
-  res.json(store.publicView(u));
+  res.json(store.publicView(u, viewerId(req)));
 });
 
 // ---------- Matchups ----------
 app.get("/api/matchup", (req, res) => {
   const me = myProfile(req);
   const gender = req.query.gender;
-  let pool = store.all().filter((u) => (!me || u.id !== me.id) && u.photo !== undefined);
+  let pool = store.visible().filter((u) => (!me || u.id !== me.id) && u.photo !== undefined);
   if (gender) pool = pool.filter((u) => u.gender === gender);
   if (pool.length < 2) return res.status(409).json({ error: "not enough profiles" });
   const a = weightedPick(pool);
   const b = weightedPick(pool, a.id);
-  res.json({ a: store.publicView(a), b: store.publicView(b) });
+  res.json({ a: store.publicView(a, viewerId(req)), b: store.publicView(b, viewerId(req)) });
 });
 
 app.post("/api/vote", requireProfile, (req, res) => {
@@ -165,11 +283,11 @@ app.post("/api/vote", requireProfile, (req, res) => {
 // Your personal ranking of everyone you've rated (by how often you picked them).
 app.get("/api/my-ranking", requireProfile, (req, res) => {
   const r = req.profile.ratings || {};
-  const ranked = store.all()
+  const ranked = store.visible()
     .filter((u) => u.id !== req.profile.id && r[u.id])
     .map((u) => {
       const { w, l } = r[u.id];
-      return { user: store.publicView(u), w, l, score: w - l, rate: w + l ? w / (w + l) : 0 };
+      return { user: store.publicView(u, req.account.id), w, l, score: w - l, rate: w + l ? w / (w + l) : 0 };
     })
     .sort((a, b) => b.score - a.score || b.rate - a.rate)
     .slice(0, 30);
@@ -181,7 +299,7 @@ app.get("/api/my-ranking", requireProfile, (req, res) => {
 // and the gated "Who Likes You?" demographic report.
 app.get("/api/report", requireProfile, (req, res) => {
   const me = req.profile;
-  const pop = store.all();
+  const pop = store.visible().some((u) => u.id === me.id) ? store.visible() : [...store.visible(), me];
   const base = report(me, pop);
   const band = attractivenessBand(me, pop);
 
@@ -200,9 +318,20 @@ app.get("/api/report", requireProfile, (req, res) => {
 
   res.json({
     ...base,
+    // Mint a short-lived photo URL for each near-match.
+    almost: base.almost.map((m) => ({ ...m, photoUrl: store.publicView(store.get(m.id), req.account.id).photoUrl })),
     credits: me.credits || 0,
     cost: COST,
     prediction: me.prediction ?? null,
+    photoStatus: me.photoStatus || "pending",
+    moderation: { reason: me.moderation?.reason || null, reviewedAt: me.moderation?.reviewedAt || null },
+    nature: {
+      ...store.moralReport(me),
+      window: NATURE_WINDOW,
+      minAnswered: MORAL_MIN_ANSWERED,
+      // Where your score sits against everyone who has finished the quiz.
+      harsherThan: moralPercentile(me, pop),
+    },
     votesCast: me.votesCast || 0,
     taste: tasteReport(me, pop),
     attractiveness: band,
@@ -220,11 +349,14 @@ app.get("/api/report", requireProfile, (req, res) => {
 // Mutual matches: you both rated each other over other people -> socials revealed.
 app.get("/api/matches", requireProfile, (req, res) => {
   res.json(
-    mutualMatches(req.profile, store.all(), { limit: 30 }).map((m) => ({
-      user: store.matchView(m.user),
+    mutualMatches(req.profile, store.visible(), { limit: 30 }).map((m) => ({
+      user: store.matchView(m.user, req.account.id),
       youPickRate: m.youPickRate,
       theyPickRate: m.theyPickRate,
       strength: m.strength,
+      yourPicks: m.yourPicks,
+      theirPicks: m.theirPicks,
+      natureGap: m.natureGap,
     }))
   );
 });
@@ -233,30 +365,30 @@ app.get("/api/match/:a/:b", (req, res) => {
   const a = store.get(req.params.a);
   const b = store.get(req.params.b);
   if (!a || !b) return res.status(404).json({ error: "not found" });
-  res.json({ ...matchScore(a, b, store.all()), mutual: likes(a, b.id) && likes(b, a.id) });
+  res.json({ ...matchScore(a, b, store.visible()), mutual: canMatch(a, b), gates: matchGates(a, b) });
 });
 
 // ---------- Guessing games ----------
 // Two-photo comparison: "who is more X". Returns two distinct targets.
 app.get("/api/versus", (req, res) => {
   const axis = req.query.axis;
-  if (!AXES[axis]) return res.status(400).json({ error: "unknown axis" });
+  if (!VERSUS_AXES.includes(axis)) return res.status(400).json({ error: "unknown axis" });
   const me = myProfile(req);
-  let pool = store.all().filter((u) => !me || u.id !== me.id);
+  let pool = store.visible().filter((u) => !me || u.id !== me.id);
   if (req.query.gender) pool = pool.filter((u) => u.gender === req.query.gender);
   if (pool.length < 2) return res.status(409).json({ error: "not enough profiles" });
   const a = pool[Math.floor(Math.random() * pool.length)];
   let b = pool[Math.floor(Math.random() * pool.length)];
   for (let g = 0; b.id === a.id && g < 50; g++) b = pool[Math.floor(Math.random() * pool.length)];
-  res.json({ a: store.publicView(a), b: store.publicView(b), axis });
+  res.json({ a: store.publicView(a, viewerId(req)), b: store.publicView(b, viewerId(req)), axis });
 });
 
 // Score a comparison: correct = picked the higher trait value.
 app.post("/api/versus-guess", (req, res) => {
   const { axis, aId, bId, pick } = req.body || {};
   const a = store.get(aId), b = store.get(bId);
-  if (!AXES[axis] || !a || !b || (pick !== "a" && pick !== "b")) return res.status(400).json({ error: "invalid guess" });
-  const va = a.traits[axis] || 0, vb = b.traits[axis] || 0;
+  if (!VERSUS_AXES.includes(axis) || !a || !b || (pick !== "a" && pick !== "b")) return res.status(400).json({ error: "invalid guess" });
+  const va = axisValue(a, axis), vb = axisValue(b, axis);
   const higher = va >= vb ? "a" : "b";
   const correct = pick === higher;
   // Record each rater's directional guess about the two photos.
@@ -272,10 +404,10 @@ app.get("/api/guess", (req, res) => {
   const axis = req.query.axis;
   if (!GUESS_AXES.includes(axis)) return res.status(400).json({ error: "unknown axis" });
   const me = myProfile(req);
-  const pool = store.all().filter((u) => !me || u.id !== me.id);
+  const pool = store.visible().filter((u) => !me || u.id !== me.id);
   if (pool.length === 0) return res.status(409).json({ error: "no profiles" });
   const target = pool[Math.floor(Math.random() * pool.length)];
-  res.json({ target: store.publicView(target), axis, poles: AXES[axis] || null });
+  res.json({ target: store.publicView(target, viewerId(req)), axis, poles: AXES[axis] || null });
 });
 
 app.post("/api/guess", (req, res) => {
@@ -286,7 +418,7 @@ app.post("/api/guess", (req, res) => {
   const me = myProfile(req);
   if (me) store.recordGuess(me.id, axis, outcome.correct);
   // Aggregate what strangers guess about the target (trait axes only).
-  if (AXES[axis] && (guess === "low" || guess === "high")) store.recordGuessAbout(targetId, axis, guess);
+  if (VERSUS_AXES.includes(axis) && (guess === "low" || guess === "high")) store.recordGuessAbout(targetId, axis, guess);
   res.json(outcome);
 });
 
@@ -294,8 +426,10 @@ app.post("/api/guess", (req, res) => {
 app.post("/api/answer", requireProfile, (req, res) => {
   const qid = String(req.body?.qid || "");
   const i = Number(req.body?.i);
-  if (!QUESTIONS.some((q) => q.id === qid)) return res.status(400).json({ error: "unknown question" });
-  store.setAnswer(req.profile.id, qid, i);
+  const bank = req.body?.bank === "moral" ? "moral" : "traits";
+  const bankQuestions = bank === "moral" ? MORAL_QUESTIONS : QUESTIONS;
+  if (!bankQuestions.some((q) => q.id === qid)) return res.status(400).json({ error: "unknown question" });
+  store.setAnswer(req.profile.id, qid, i, bank);
   res.json({ ok: true });
 });
 
@@ -329,7 +463,7 @@ app.post("/api/unlock-fans", requireProfile, (req, res) => {
   if (req.profile.fansUnlocked) return res.json({ ok: true, alreadyOwned: true, credits: req.profile.credits });
   if (!store.spend(req.profile.id, COST.fans)) return res.status(402).json({ error: "not enough credits", credits: req.profile.credits });
   store.unlockFans(req.profile.id);
-  res.json({ ok: true, credits: req.profile.credits, report: fansReport(req.profile, store.all()) });
+  res.json({ ok: true, credits: req.profile.credits, report: fansReport(req.profile, store.visible()) });
 });
 
 // Buy more matchup pairs (more data, faster) — boosts how often your photo shows.
@@ -345,6 +479,24 @@ app.post("/api/email-pref", requireProfile, (req, res) => {
 });
 
 // ---------- Buy credits ----------
+// ---------- Admin: photo approval queue ----------
+// Nothing is ever auto-approved — every photo waits here for a human decision.
+app.get("/api/admin/queue", requireAdmin, (req, res) => {
+  const q = store.moderationQueue({ limit: 100 });
+  res.json({
+    pending: q.pending.map((u) => store.adminView(u, req.account.id)),
+    decided: q.decided.map((u) => store.adminView(u, req.account.id)),
+  });
+});
+
+app.post("/api/admin/photo/:id", requireAdmin, (req, res) => {
+  const { action, reason } = req.body || {};
+  if (!["approve", "reject", "escalate"].includes(action)) return res.status(400).json({ error: "unknown action" });
+  const updated = store.moderatePhoto(req.params.id, action, reason, req.account.email);
+  if (!updated) return res.status(404).json({ error: "not found" });
+  res.json(store.adminView(updated, req.account.id));
+});
+
 app.get("/api/credit-packs", (_req, res) => res.json({ packs: CREDIT_PACKS }));
 
 // Purchase a pack. NOTE: demo checkout — no real payment processor is wired,

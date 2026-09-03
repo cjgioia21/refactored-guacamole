@@ -16,8 +16,10 @@ const post = (url, body) => api(url, { method: "POST", headers: { "Content-Type"
 
 const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 function avatar(u, cls = "") {
-  return u.photo
-    ? `<img class="${cls}" src="${esc(u.photo)}" alt="${esc(u.name)}" onerror="this.replaceWith(Object.assign(document.createElement('div'),{className:'avatar ${cls}',textContent:'${esc((u.name||'?')[0])}'}))" />`
+  // photoUrl is a short-lived, viewer-bound link minted by the server — the
+  // client never sees image bytes or a stable photo id.
+  return u.photoUrl
+    ? `<img class="${cls}" src="${esc(u.photoUrl)}" alt="${esc(u.name)}" referrerpolicy="no-referrer" onerror="this.replaceWith(Object.assign(document.createElement('div'),{className:'avatar ${cls}',textContent:'${esc((u.name||'?')[0])}'}))" />`
     : `<div class="avatar ${cls}">${esc((u.name || "?")[0])}</div>`;
 }
 const setCredits = (n) => { if (n != null) $("#credits").textContent = n; };
@@ -57,6 +59,8 @@ function show(view) {
   if (view === "report") loadReport();
   if (view === "matches") loadMatches();
   if (view === "buy") loadBuy();
+  if (view === "admin") loadAdminQueue();
+  if (view === "moral") loadMoralQuiz();
   window.scrollTo(0, 0);
 }
 
@@ -122,6 +126,10 @@ async function boot() {
   $("#view-landing").classList.remove("active");
   $("#app").hidden = false;
   setCredits(me.profile?.credits ?? 0);
+  $("#tab-admin").hidden = !me.isAdmin;
+  $("#admin-tile").hidden = !me.isAdmin;
+  renderPhotoStatus();
+  renderMoralNag();
   if (!me.profile) { showApp(); show("onboard"); prefillName(); }
   else { showApp(); show("home"); }
 }
@@ -143,6 +151,7 @@ async function buildForms() {
     else { selectedMH.has(f) ? selectedMH.delete(f) : selectedMH.add(f); el.classList.toggle("sel"); }
   }));
   QUESTION_CACHE = (await api("/api/questions")).body.questions;
+  MORAL_CACHE = (await api("/api/moral-questions")).body?.questions || [];
   let lastCat = null;
   $("#questions").innerHTML = QUESTION_CACHE.map((q, n) => {
     const header = q.category !== lastCat ? `<div class="quiz-head">${esc(q.category)} <span class="hint">quiz</span></div>` : "";
@@ -154,7 +163,14 @@ async function buildForms() {
 }
 
 let QUESTION_CACHE = [];
+let MORAL_CACHE = [];
 const byId = (id) => QUESTION_CACHE.find((q) => q.id === id);
+// A game's "first, about you" question can come from either bank — the morality
+// game asks a morality question. Returns { q, bank }.
+function selfQuestion(game) {
+  if (game.selfBank === "moral") return { q: MORAL_CACHE.find((x) => x.id === game.selfQ), bank: "moral" };
+  return { q: byId(game.selfQ), bank: "traits" };
+}
 
 // Full-width stacked option buttons; tiered questions expand a finer row.
 function questionBodyHTML(q) {
@@ -209,15 +225,26 @@ $("#onboard-form").addEventListener("submit", async (e) => {
     age: f.age.value, gender, genderIdentity, orientation: f.orientation.value, ratingsFrom,
     prediction: predMoved ? f.prediction.value : null,
     mentalHealth: [...selectedMH], socials: { instagram: f.instagram.value },
+    confirmedAdult: [...$("#confirms").querySelectorAll("[data-confirm]")].every((c) => c.checked),
   };
   const photo = photoData || f.photo.value;
   if (photo) payload.photo = photo; // keep existing photo when editing without a new one
   if (Object.keys(answers).length) payload.answers = answers;
   const { status, body } = await post("/api/profile", payload);
+  if (status === 422 && body?.profile) {
+    // Screened out before it ever reached the review queue (e.g. declared under 18).
+    me.profile = body.profile;
+    renderPhotoStatus();
+    alert(`Photo rejected: ${body.error}`);
+    window.scrollTo(0, 0);
+    return;
+  }
   if (status >= 400) { alert(body?.error || "Couldn't submit — check your photo size."); return; }
   me.profile = body;
   setCredits(body.credits);
+  renderPhotoStatus();
   show("home");
+  if (body.photoStatus === "pending") toast("⏳ Photo submitted — it goes live once a human approves it.");
 });
 
 // ================= Home =================
@@ -390,6 +417,9 @@ async function loadReport() {
   const guesses = `<div class="card"><div class="section-title" style="margin-top:0">🔮 What strangers guess about your photo</div>
     ${guessRows}<p class="meta" style="margin:12px 0 0">From direct guesses in the games. The more you <b>play &amp; rate</b>, the more your photo is shown to others.</p></div>`;
 
+  // Human Nature score — the number that decides who you can match with.
+  const nature = natureCard(r);
+
   // Who Likes You?
   const fans = r.fans.unlocked ? fansCard(r.fans.report) : lockedFansCard(r.fans, r.credits);
 
@@ -400,17 +430,66 @@ async function loadReport() {
       <div class="card"><div class="stat"><b>${r.matches.length}</b><span class="meta">mutual matches</span></div><button class="outline" style="width:100%;margin-top:8px" id="go-matches">open matches →</button></div>
       <div class="card"><div class="stat"><b>${r.crushes}</b><span class="meta">you rated highly, no match back</span></div></div>
     </div>
+    ${almostSection(r.almost || [])}
     <label class="email-pref" style="margin-top:14px"><input type="checkbox" id="email-pref" ${r.emailOnNewData ? "checked" : ""}/> email me when new data is available</label>`;
 
-  $("#report").innerHTML = trueNatureCard(r, p) + attract + tasteSection(r.taste) + guesses + fans + extra;
+  $("#report").innerHTML = trueNatureCard(r, p) + attract + nature + tasteSection(r.taste) + guesses + fans + extra;
 
   $("#tn-share")?.addEventListener("click", () => shareTrueNature(r));
   $("#go-matches")?.addEventListener("click", () => show("matches"));
+  $("#go-moral")?.addEventListener("click", () => show("moral"));
   $("#buy-pairs")?.addEventListener("click", () => spendAction("/api/buy-pairs", {}));
   $("#report").querySelectorAll("[data-reveal]").forEach((b) => b.addEventListener("click", () => spendAction("/api/reveal", { game: b.dataset.reveal })));
   $("#report").querySelectorAll("[data-play-game]").forEach((b) => b.addEventListener("click", () => playGame(b.dataset.playGame)));
   $("#unlock-fans")?.addEventListener("click", () => spendAction("/api/unlock-fans", {}));
   $("#email-pref")?.addEventListener("change", (e) => post("/api/email-pref", { on: e.target.checked }));
+}
+
+// The Human Nature score: the verdict band, the six vices, and where you sit
+// against everyone else. This is the card built to be screenshotted.
+function natureCard(r) {
+  const n = r.nature || {};
+  if (!n.answered) {
+    return `<div class="card nature-card"><div class="section-title" style="margin-top:0">🧬 Your Human Nature score</div>
+      <p style="margin:0 0 10px">You haven't taken the morality quiz. Until you do, your score is 0 and <b>nobody can match with you</b>.</p>
+      <button class="primary" id="go-moral">take the morality quiz →</button></div>`;
+  }
+  const v = n.verdict || {};
+  const rows = Object.entries(n.breakdown || {}).map(([key, b]) => {
+    const pos = b.max ? Math.round(((b.score / b.max + 1) / 2) * 100) : 50;
+    return `<div class="nature-row">
+      <div class="nature-label"><span>${esc(b.ends?.[0] || "")}</span><b>${b.emoji || ""} ${esc(b.label)} ${b.score > 0 ? "+" : ""}${b.score}</b><span>${esc(b.ends?.[1] || "")}</span></div>
+      <div class="track"><i class="knob" style="left:${Math.max(0, Math.min(100, pos))}%"></i></div>
+    </div>`;
+  }).join("");
+  const worst = n.worst ? `<p class="meta">Your worst showing was <b>${esc(n.worst.label)}</b> (${n.worst.score > 0 ? "+" : ""}${n.worst.score} of a possible +${n.worst.max}).</p>` : "";
+  const rank = n.harsherThan != null
+    ? `<p class="nature-rank">You answered worse than <b>${n.harsherThan}%</b> of everyone who has taken this quiz.</p>` : "";
+  const incomplete = n.complete ? "" :
+    `<p class="meta">${n.answered} of ${n.total} answered — the rest will move this number.</p>`;
+  return `<div class="card nature-card"><div class="section-title" style="margin-top:0">🧬 Your Human Nature score</div>
+    <div class="nature-score"><b>${n.score > 0 ? "+" : ""}${n.score}</b><span class="verdict-band">${esc(v.label || "")}</span></div>
+    <p class="verdict-line">${esc(v.line || "")}</p>
+    ${rank}${worst}${incomplete}
+    <p class="meta">You can only match with someone whose score is within <b>${n.window}</b> points of yours.</p>
+    ${rows}
+    <button class="outline" style="width:100%;margin-top:12px" id="go-moral">${n.complete ? "review your answers" : "finish the quiz"} →</button></div>`;
+}
+
+// People you both like who haven't cleared the remaining gates yet.
+function almostSection(almost) {
+  if (!almost.length) return "";
+  const rows = almost.map((m) => {
+    const why = m.blockedBy === "nature"
+      ? `your Human Nature scores are ${m.natureGap} apart — too far to match`
+      : m.blockedBy === "your-quiz" ? "you haven't finished the morality quiz — they're waiting on you"
+      : m.blockedBy === "their-quiz" ? "they haven't taken the morality quiz yet"
+      : `pick them ${m.picksToGo} more time${m.picksToGo === 1 ? "" : "s"} to unlock it`;
+    return `<div class="card match-card">${avatar(m)}
+      <h3>${esc(m.name)}</h3><div class="meta">${why}</div></div>`;
+  }).join("");
+  return `<div class="section-title">So close <span class="hint">— you both picked each other, but a gate isn't cleared</span></div>
+    <div class="cards">${rows}</div>`;
 }
 
 function lockedFansCard(f, credits) {
@@ -524,14 +603,165 @@ function toast(msg) {
 }
 
 // ================= Matches (socials only) =================
+// ================= The morality quiz =================
+// Reuses the same question renderer as the taste quiz. The difference is that
+// every answer posts immediately and comes back with the confession stat —
+// what everyone else said — which is the reason anyone finishes it.
+let MORAL_META = { minAnswered: 24, total: 36 };
+
+async function loadMoralQuiz() {
+  const { status, body } = await api("/api/moral-questions");
+  if (status !== 200 || !body) return;
+  MORAL_META = { minAnswered: body.minAnswered, total: body.questions.length };
+  const answers = body.answers || {};
+  let lastVice = null;
+  $("#moral-questions").innerHTML = body.questions.map((q, n) => {
+    const header = q.vice !== lastVice
+      ? `<div class="quiz-head">${esc(body.vices[q.vice].emoji)} ${esc(body.vices[q.vice].label)} <span class="hint">quiz</span></div>` : "";
+    lastVice = q.vice;
+    return `${header}<div class="q moral-q" data-qid="${q.id}"${answers[q.id] != null ? ` data-answer="${answers[q.id]}"` : ""}>
+      <p><span class="q-num">${n + 1}.</span> ${esc(q.prompt)}</p>
+      ${questionBodyHTML(q)}
+      <div class="confession" hidden></div></div>`;
+  }).join("");
+
+  $("#moral-questions").querySelectorAll(".moral-q").forEach((qEl) => {
+    const q = body.questions.find((x) => x.id === qEl.dataset.qid);
+    // Restore a previous answer's selected state.
+    const prev = answers[q.id];
+    if (prev != null) qEl.querySelector(`.opt[data-i="${prev}"]`)?.classList.add("sel");
+    wireQuestion(qEl, q, async (i) => {
+      const r = await post("/api/moral-answer", { qid: q.id, i });
+      if (r.status !== 200) return;
+      showConfession(qEl, r.body.stats, q);
+      updateMoralProgress(r.body.answered, r.body.total, r.body.score);
+    });
+  });
+  updateMoralProgress(body.answered, body.questions.length, me?.profile?.natureScore ?? 0);
+}
+
+// "61% of people gave the same answer" — shown the moment you commit to one.
+function showConfession(qEl, stats, q) {
+  const el = qEl.querySelector(".confession");
+  if (!el || !stats) return;
+  const bars = stats.shares.map((sh, i) => `<div class="cf-row${i === Number(qEl.dataset.answer) ? " mine" : ""}">
+      <span class="cf-label">${esc(sh.label)}</span>
+      <span class="cf-bar"><i style="width:${sh.pct ?? 0}%"></i></span>
+      <span class="cf-pct">${sh.pct == null ? "—" : sh.pct + "%"}</span>
+    </div>`).join("");
+  const worse = stats.you?.worsePct != null && stats.total >= 5
+    ? `<div class="cf-verdict">${stats.you.worsePct}% of people answered worse than you did.</div>` : "";
+  el.innerHTML = `<b>${esc(stats.you?.line || "")}</b>${bars}${worse}
+    <div class="meta">${stats.total.toLocaleString()} answers</div>`;
+  el.hidden = false;
+}
+
+function updateMoralProgress(answered, total, score) {
+  const pct = Math.round((answered / total) * 100);
+  $("#moral-bar").style.width = pct + "%";
+  $("#moral-count").textContent = `${answered} / ${total}`;
+  if (me?.profile) { me.profile.moralAnswered = answered; me.profile.natureScore = score; }
+  const left = MORAL_META.minAnswered - answered;
+  $("#moral-verdict").innerHTML = answered >= MORAL_META.minAnswered
+    ? `<div class="card"><b>Score: ${score > 0 ? "+" : ""}${score}</b>
+         <div class="meta">Enough answered to match. Finish the rest to sharpen it — see the full verdict on your report.</div>
+         <button class="outline" style="margin-top:8px" data-view="report">open your report →</button></div>`
+    : `<div class="card"><b>${left} more before you can match</b>
+         <div class="meta">Your Human Nature score gates who you're allowed to match with. Until you've answered ${MORAL_META.minAnswered}, nobody can match you.</div></div>`;
+  $("#moral-verdict").querySelector("[data-view]")?.addEventListener("click", () => show("report"));
+  renderMoralNag();
+}
+
+// Home tile nag: the quiz is the thing blocking matches, so say so.
+function renderMoralNag() {
+  const answered = me?.profile?.moralAnswered || 0;
+  const done = answered >= MORAL_META.minAnswered;
+  const badge = $("#moral-badge");
+  const meta = $("#moral-meta");
+  if (badge) badge.hidden = done;
+  if (meta) meta.textContent = done ? `${answered} / ${MORAL_META.total} answered →` : "required to match →";
+}
+
+// ================= Photo moderation (owner-facing) =================
+const PHOTO_STATUS = {
+  pending: { cls: "pending", icon: "⏳", title: "Photo pending review",
+    body: "Nobody sees your photo until a human approves it. Everything else on the site works in the meantime." },
+  rejected: { cls: "rejected", icon: "⛔", title: "Photo rejected",
+    body: "Your photo isn't shown to anyone. Upload a different one that meets the requirements above." },
+  approved: { cls: "approved", icon: "✅", title: "Photo approved",
+    body: "You're in the rating pool — strangers are comparing your photo right now." },
+};
+function renderPhotoStatus() {
+  const el = $("#photo-status");
+  const p = me?.profile;
+  if (!el) return;
+  if (!p) { el.hidden = true; return; }
+  const s = PHOTO_STATUS[p.photoStatus] || PHOTO_STATUS.pending;
+  const reason = p.moderation?.reason ? `<div class="meta">reason: ${esc(p.moderation.reason)}</div>` : "";
+  const locked = p.accountLocked
+    ? `<div class="meta"><b>This account is locked.</b> Re-uploading is disabled — contact support if you think this is a mistake.</div>`
+    : "";
+  el.className = `photo-status ${s.cls}`;
+  el.innerHTML = `<b>${s.icon} ${s.title}</b><div class="meta">${s.body}</div>${reason}${locked}`;
+  el.hidden = false;
+  if (!p.hasPhoto && p.photoStatus !== "rejected") {
+    el.className = "photo-status pending";
+    el.innerHTML = `<b>📸 No photo yet</b><div class="meta">Add one below — without a photo you can't be rated, and you can't match.</div>`;
+    el.hidden = false;
+  }
+  const meta = $("#photo-meta");
+  if (meta) meta.textContent = { pending: "pending review →", rejected: "rejected — fix it →", approved: "manage →" }[p.photoStatus] || "manage →";
+}
+
+// ================= Admin: photo approval queue =================
+async function loadAdminQueue() {
+  const wrap = $("#admin-queue");
+  const { status, body } = await api("/api/admin/queue");
+  if (status !== 200) return (wrap.innerHTML = `<p class="empty">Admin access required.</p>`);
+  const card = (u, decided) => `<div class="card review-card" data-id="${u.id}">
+    ${avatar(u, "review-photo")}
+    <div class="review-body">
+      <h3>${esc(u.name)}${u.age ? ", " + u.age : " — no age given"}</h3>
+      <div class="meta">${esc(u.genderIdentity || u.gender || "gender not given")} · submitted ${new Date(u.photoSubmittedAt).toLocaleString()}</div>
+      ${(u.moderation.flags || []).length ? `<div class="flags">${u.moderation.flags.map((f) => `<span class="flag">${esc(f)}</span>`).join("")}</div>` : `<div class="meta">no automated flags</div>`}
+      ${u.moderation.reason ? `<div class="meta">reason: ${esc(u.moderation.reason)}</div>` : ""}
+      ${decided
+        ? `<div class="meta">${esc(u.photoStatus)}${u.accountLocked ? " · account locked" : ""} by ${esc(u.moderation.reviewedBy || "admin")}</div>`
+        : `<div class="review-actions">
+             <button class="primary" data-act="approve">Approve</button>
+             <button class="outline" data-act="reject">Reject</button>
+             <button class="danger" data-act="escalate">Escalate &amp; lock</button>
+           </div>`}
+    </div></div>`;
+  wrap.innerHTML = `
+    <div class="section-title">Awaiting review (${body.pending.length})</div>
+    ${body.pending.length ? body.pending.map((u) => card(u, false)).join("") : `<p class="empty">Nothing waiting. 🎉</p>`}
+    <div class="section-title">Recent decisions</div>
+    ${body.decided.length ? body.decided.slice(0, 20).map((u) => card(u, true)).join("") : `<p class="empty">No decisions yet.</p>`}`;
+  wrap.querySelectorAll("[data-act]").forEach((btn) => btn.addEventListener("click", async () => {
+    const id = btn.closest(".review-card").dataset.id;
+    const action = btn.dataset.act;
+    let reason = null;
+    if (action !== "approve") {
+      reason = prompt(action === "escalate" ? "Why is this being escalated? (e.g. possible minor)" : "Why is this photo rejected?");
+      if (reason === null) return;
+    }
+    const r = await post(`/api/admin/photo/${id}`, { action, reason });
+    if (r.status !== 200) return toast("Couldn't save that decision.");
+    toast(`${esc(action)}d`);
+    loadAdminQueue();
+  }));
+}
+
 async function loadMatches() {
   const matches = (await api("/api/matches")).body || [];
   $("#matches-list").innerHTML = matches.length
     ? matches.map((m) => `<div class="card match-card">${avatar(m.user)}
         <h3>${esc(m.user.name)}${m.user.age ? ", " + m.user.age : ""}</h3>
         <div class="meta">you picked them ${m.youPickRate}% · they picked you ${m.theyPickRate}%</div>
+        <div class="meta">${m.yourPicks}× / ${m.theirPicks}× picked · nature gap ${m.natureGap}</div>
         ${socialLinks(m.user.socials)}</div>`).join("")
-    : `<p class="empty">No matches yet. Rate photos — a match happens when you both pick each other over others.</p>`;
+    : `<p class="empty">No matches yet. A match takes four things: you both take the morality quiz, you pick each other over other people, at least ${META.match?.minPicks ?? 3} times each, and your Human Nature scores land within ${META.match?.natureWindow ?? 25} points.</p>`;
 }
 function socialLinks(s) {
   const items = Object.entries(s || {}).map(([k, v]) => `<a class="pill" href="https://instagram.com/${esc(v)}" target="_blank" rel="noopener">${esc(k)}: @${esc(v)}</a>`);
@@ -555,15 +785,30 @@ async function playGame(gameKey) {
     a.addEventListener("click", () => a.dataset.goto === "home" ? (renderGameGrid(), show("home")) : playGame(a.dataset.goto)));
 
   // ---- Step 1: the same question about you ----
-  const selfQ = byId(game.selfQ);
+  const { q: selfQ, bank } = selfQuestion(game);
+  if (!selfQ) return runRounds(); // no self-question available — go straight to the rounds
   wrap.innerHTML = `<p class="game-sub">For every ${cfg.need}/${cfg.rounds} correct, earn ${cfg.reward} credits.</p>
     <div class="card"><h3>First, the same question about you</h3>
       <p class="sub">Fair's fair: before guessing about others, your own answer goes in the pot. It stays private and is only used in aggregate.</p>
-      <div class="q" data-qid="${selfQ.id}"><p>${esc(selfQ.prompt)}</p>${questionBodyHTML(selfQ)}</div>
+      <div class="q" data-qid="${selfQ.id}"><p>${esc(selfQ.prompt)}</p>${questionBodyHTML(selfQ)}
+        <div class="confession" hidden></div></div>
     </div>${gamesFooter(game.key)}`;
   wireFooter();
-  wireQuestion(wrap.querySelector(".q"), selfQ, async (i) => {
-    await post("/api/answer", { qid: selfQ.id, i });
+  const qEl = wrap.querySelector(".q");
+  wireQuestion(qEl, selfQ, async (i) => {
+    // A morality answer goes through the quiz endpoint so it scores and returns
+    // the confession stat; a taste answer just updates the trait vector.
+    if (bank === "moral") {
+      const r = await post("/api/moral-answer", { qid: selfQ.id, i });
+      if (r.status === 200) {
+        showConfession(qEl, r.body.stats, selfQ);
+        if (me.profile) { me.profile.natureScore = r.body.score; me.profile.moralAnswered = r.body.answered; }
+        renderMoralNag();
+        return setTimeout(runRounds, 2200); // long enough to read the stat
+      }
+    } else {
+      await post("/api/answer", { qid: selfQ.id, i });
+    }
     setTimeout(runRounds, 350); // brief beat so the selection registers visually
   });
 

@@ -2,19 +2,52 @@
 // credit economy all have data out of the box.
 //   node src/seed.js         -> seeds if empty
 // Demo login: demo@truehumannature.com / hunter2
+import sharp from "sharp";
 import * as store from "./store.js";
+import * as photos from "./photos.js";
 import * as auth from "./auth.js";
 import { QUESTIONS } from "./questions.js";
-import { recordVote, attractedGenders, guessOutcome, GAMES } from "./engine.js";
+import { MORAL_QUESTIONS } from "./morality.js";
+import { recordVote, attractedGenders, guessOutcome, GAMES, natureGap, mutualMatches, MIN_MUTUAL_PICKS, NATURE_WINDOW } from "./engine.js";
 
-function answersFor(seed) {
+function answersFor(seed, bank = QUESTIONS) {
   const a = {};
   let s = seed;
-  for (const q of QUESTIONS) {
+  for (const q of bank) {
     s = (s * 1103515245 + 12345) & 0x7fffffff;
     a[q.id] = s % q.options.length;
   }
   return a;
+}
+// A morality quiz answered around a chosen moral centre, so the seeded pool
+// spreads across the verdict bands instead of clustering at zero.
+function moralFor(seed, lean = 0) {
+  const a = {};
+  let s = seed;
+  for (const q of MORAL_QUESTIONS) {
+    s = (s * 1103515245 + 12345) & 0x7fffffff;
+    const jitter = (s % 3) - 1; // -1, 0 or 1
+    const want = Math.max(-2, Math.min(2, lean + jitter));
+    a[q.id] = q.options.findIndex((o) => o.value === want);
+  }
+  return a;
+}
+
+// Demo portraits, generated locally. The old seed pointed at a remote avatar
+// service, which meant that host saw every viewer of the site — exactly the
+// leak the rest of this work exists to close.
+async function demoPhoto(i) {
+  const hue = (i * 37) % 360;
+  const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="400" height="520">
+    <defs><linearGradient id="g" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="hsl(${hue},62%,58%)"/><stop offset="100%" stop-color="hsl(${(hue + 48) % 360},58%,38%)"/>
+    </linearGradient></defs>
+    <rect width="400" height="520" fill="url(#g)"/>
+    <circle cx="200" cy="196" r="86" fill="hsl(${hue},40%,86%)"/>
+    <ellipse cx="200" cy="430" rx="132" ry="130" fill="hsl(${hue},40%,86%)"/>
+  </svg>`;
+  // Rasterized to a JPEG before it goes near the store — put() refuses SVG.
+  return photos.put(await sharp(Buffer.from(svg)).jpeg().toBuffer());
 }
 
 const PEOPLE = [
@@ -33,26 +66,31 @@ const PEOPLE = [
 ];
 
 if (store.all().length === 0) {
-  const created = PEOPLE.map(([name, gender, orientation, age, mentalHealth], i) =>
+  const created = await Promise.all(PEOPLE.map(async ([name, gender, orientation, age, mentalHealth], i) =>
     store.create({
       name, gender, orientation, age, mentalHealth,
-      photo: `https://i.pravatar.cc/300?img=${i + 5}`,
+      photo: await demoPhoto(i),
       socials: { instagram: name.toLowerCase() + "_" + (10 + i) },
       answers: answersFor(i + 1),
+      // Spread the pool across the moral spectrum: saints through to monsters.
+      moralAnswers: moralFor(i + 1, [-2, -1, -1, 0, 0, 0, 0, 1, 1, 1, 2, 2][i % 12]),
     })
-  );
+  ));
 
   // A demo account you can log into, linked to a real (rateable) profile.
   const acct = auth.signup("demo@truehumannature.com", "hunter2").account;
   const demo = store.create({
     accountId: acct.id, name: "Demo", gender: "man", orientation: "straight", age: 27,
-    mentalHealth: [], photo: "https://i.pravatar.cc/300?img=12",
-    socials: { instagram: "demo_thn" }, answers: answersFor(99),
+    mentalHealth: [], photo: await demoPhoto(99),
+    socials: { instagram: "demo_thn" }, answers: answersFor(99), moralAnswers: moralFor(99, 0),
   });
   auth.linkProfile(acct.id, demo.id);
   store.addCredits(demo.id, 120); // enough to reveal a few traits, not the 300 report
 
   const pool = [...created, demo];
+  // Demo photos are pre-approved so the seeded site is usable immediately.
+  for (const u of pool) store.moderatePhoto(u.id, "approve", "seeded demo profile", "seed");
+
   const rnd = (n) => Math.floor(Math.random() * n);
   const traitSim = (p, q) => Object.keys(p.traits).reduce((s, k) => s - Math.abs(p.traits[k] - q.traits[k]), 0);
   const appeal = (voter, cand) => {
@@ -78,6 +116,22 @@ if (store.all().length === 0) {
     recordVote(demo, appeal(demo, x) >= appeal(demo, y) ? x : y, appeal(demo, x) >= appeal(demo, y) ? y : x);
   }
 
+  // Guarantee a couple of real matches for the demo account: pick the closest
+  // Human Nature scores inside the window and have them pick each other enough
+  // times to clear MIN_MUTUAL_PICKS.
+  const filler = created.find((u) => u.id !== demo.id);
+  const partners = created
+    .filter((u) => u !== filler && natureGap(demo, u) <= NATURE_WINDOW)
+    .sort((a, b) => natureGap(demo, a) - natureGap(demo, b))
+    .slice(0, 2);
+  for (const p of partners) {
+    // Enough wins to clear the losses the random rounds already handed out,
+    // plus the pick minimum — otherwise likes() stays false and no match forms.
+    const need = (a, b) => (a.ratings?.[b.id]?.l || 0) + MIN_MUTUAL_PICKS + 1;
+    for (let i = 0, n = need(demo, p); i < n; i++) recordVote(demo, p, filler);
+    for (let i = 0, n = need(p, demo); i < n; i++) recordVote(p, demo, filler);
+  }
+
   // Strangers guess about photos (populates "what strangers guess about you").
   for (let g = 0; g < 600; g++) {
     const target = pool[rnd(pool.length)];
@@ -89,7 +143,8 @@ if (store.all().length === 0) {
   }
 
   store.save();
-  console.log(`Seeded ${pool.length} profiles (incl. demo@truehumannature.com / hunter2), matchups + guesses.`);
+  const demoMatches = mutualMatches(demo, pool).length;
+  console.log(`Seeded ${pool.length} approved profiles (incl. demo@truehumannature.com / hunter2), matchups + guesses; demo has ${demoMatches} match(es).`);
 } else {
   console.log(`Store already has ${store.all().length} profiles; skipping seed.`);
 }

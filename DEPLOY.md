@@ -18,11 +18,60 @@ won't work). Any of the paths below works.
   | `NODE_ENV=production` | recommended | enables `Secure` cookies + `trust proxy` |
   | `SESSION_SECRET` | recommended | stable secret so logins survive restarts (any long random string). If unset, a `.secret` file is used. |
   | `DATA_DIR` | for persistence | absolute path to a persistent volume, e.g. `/data` |
+  | `PHOTO_KEY` | **strongly recommended** | 64 hex chars (`openssl rand -hex 32`). Encrypts photos at rest. **Store it outside `DATA_DIR`** — a backup that contains its own key is not encrypted in any useful sense. If unset, a `.photokey` file is written *inside* `DATA_DIR`, which is convenient and much weaker. |
+  | `PHOTO_URL_SECRET` | optional | signs photo URLs; falls back to `SESSION_SECRET`. Rotating it invalidates every outstanding photo link immediately. |
+  | `ADMIN_EMAILS` | to review photos | comma-separated admin logins, e.g. `you@example.com`. Only these accounts see the **Review** tab. Nothing is published until one of them approves it. |
+  | `PHOTO_HOURLY_BUDGET` | optional | photo fetches per account per hour (default 400). Exceeding it returns 429 and logs the account. |
+  | `MODERATION_PROVIDER` | optional | `none` (default) = manual-only screening. |
   | `GOOGLE_CLIENT_ID` / `GOOGLE_CLIENT_SECRET` / `OAUTH_REDIRECT` | optional | enables the "Sign in with Google" button; email/password works without them |
 
-> Persistence note: JSON files are fine for launch/small scale. For real traffic
-> or multiple instances, move to a database (the store in `src/store.js` is the
-> only file that reads/writes data — swap its file I/O for a DB there).
+> Persistence note: JSON files are fine for launch/small scale. Photos are
+> **not** in the JSON — they live encrypted under `$DATA_DIR/photos/` — so
+> `users.json` stays small. The remaining limit is that it's rewritten in full
+> on every vote, which holds to roughly a thousand profiles. Past that, move to
+> a database (`src/store.js` is the only file that reads/writes profile data).
+
+## Photo storage — what to know before you launch
+
+Photos are the most sensitive thing this site holds. How they're handled:
+
+- **Sanitized on upload.** Every image is re-encoded by `sharp` before storage,
+  which destroys EXIF — including the **GPS coordinates** a phone photo carries
+  — along with embedded thumbnails and anything hidden in the file. Only JPEG,
+  PNG and WebP are accepted; SVG is rejected outright, because an SVG is a
+  script.
+- **Encrypted at rest** with AES-256-GCM under a key derived per photo from
+  `PHOTO_KEY`. A stolen disk or a copied backup is ciphertext.
+- **No stable URLs.** Each photo link is an HMAC over
+  (photo id, viewer's account id, expiry) and lasts ten minutes. A link that
+  leaks or gets shared is dead on arrival and never worked in anyone else's
+  session to begin with.
+- **Rate limited.** `PHOTO_HOURLY_BUDGET` caps how many photos one account can
+  pull per hour, and exceeding it is logged — the practical defence against a
+  signed-up account scraping the whole library.
+- **Deleted on rejection.** Rejecting a photo in review erases the bytes; it
+  isn't merely hidden.
+
+**What this does not protect against**, stated plainly so you can plan around it:
+an admin reviewing photos sees all of them (that's the feature); a logged-in
+user can screenshot anything on their screen; and if someone compromises the
+running server they have the key in memory — encryption at rest protects stolen
+disks and backups, not a live root shell.
+
+**Operationally:** put `PHOTO_KEY` somewhere other than `DATA_DIR`, back the key
+up separately (losing it means every stored photo is unrecoverable), keep
+`$DATA_DIR/photos` at `chmod 700`, and make sure your backups are encrypted —
+they contain the same ciphertext, which is only as safe as the key's separation
+from it.
+
+### Migrating an existing install
+Older data stored photos inline in `users.json`. Move them into the blob store:
+
+```bash
+node scripts/migrate-photos.js --dry-run   # report only
+node scripts/migrate-photos.js             # migrate (writes a .pre-photo-migration backup)
+```
+It's idempotent, so re-running is safe.
 
 ---
 
@@ -84,7 +133,9 @@ git clone https://github.com/cjgioia21/refactored-guacamole thn && cd thn
 sudo bash deploy/setup.sh
 ```
 `setup.sh` installs Node 20, git, nginx, certbot, and pm2; generates a stable
-`SESSION_SECRET` (stored at `/etc/thn.secret`); installs deps; and starts the app
+`SESSION_SECRET` (stored at `/etc/thn.secret`) and a `PHOTO_KEY` (at
+`/etc/thn.photokey`, deliberately outside the data directory); installs deps;
+and starts the app
 under **pm2** with `NODE_ENV=production DATA_DIR=/var/lib/thn`, set to relaunch on
 reboot. Verify: `pm2 status` shows **thn** online, and
 `curl -sf http://127.0.0.1:3000/auth/config` returns JSON.

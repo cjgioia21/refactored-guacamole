@@ -2,4 +2,9 @@ node_modules/
 data/users.json
 data/accounts.json
 data/.secret
+data/.photokey
+data/.photosecret
+data/moral-tally.json
+data/photos/
+data/*.pre-photo-migration
 *.log

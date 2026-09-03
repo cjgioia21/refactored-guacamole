@@ -172,3 +172,34 @@ export function axisLabel(axis, value) {
   const strength = Math.abs(value) > 0.6 ? "very " : "";
   return `${strength}${word}`;
 }
+
+// ---------- Human Nature score ----------
+// Each answered question contributes -2..+2 (option value * 2, rounded), so a
+// fully answered questionnaire spans roughly -120..+120. Higher = further
+// toward high-bodycount / higher-net-worth / right-leaning / dominant / gooner.
+export function natureScore(answers = {}) {
+  let score = 0;
+  for (const question of QUESTIONS) {
+    const idx = answers[question.id];
+    if (idx == null) continue;
+    const opt = question.options[idx];
+    if (!opt) continue;
+    score += Math.round(opt.value * 2);
+  }
+  return score;
+}
+
+// Per-axis contribution to the Human Nature score, so it isn't a black box.
+export function natureBreakdown(answers = {}) {
+  const out = {};
+  for (const axis of Object.keys(AXES)) out[axis] = { score: 0, answered: 0 };
+  for (const question of QUESTIONS) {
+    const idx = answers[question.id];
+    if (idx == null) continue;
+    const opt = question.options[idx];
+    if (!opt) continue;
+    out[question.axis].score += Math.round(opt.value * 2);
+    out[question.axis].answered += 1;
+  }
+  return out;
+}

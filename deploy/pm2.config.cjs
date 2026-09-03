@@ -1,6 +1,6 @@
 // pm2 process definition for TrueHumanNature.
-// Env (NODE_ENV, DATA_DIR, SESSION_SECRET) is passed in by deploy/setup.sh via
-// --update-env, so it isn't hard-coded here.
+// Env (NODE_ENV, DATA_DIR, SESSION_SECRET, PHOTO_KEY, ADMIN_EMAILS) is passed
+// in by deploy/setup.sh via --update-env, so no secret is hard-coded here.
 module.exports = {
   apps: [
     {

@@ -18,12 +18,39 @@ others and pick who's more attractive. From those choices TrueHumanNature builds
   gender/age/personality lean), **unlocked for credits**.
 - **Your type** — learned from *the photos you choose*: gender you're drawn to,
   older/younger age lean, mental-health openness, and political/personality traits.
-- **Matches** — a match happens when **you both rate each other's photo over other
-  people's** (mutual revealed preference). On a match, you each see the other's
-  **socials** (Instagram, etc.) so you can reach out.
+- **Your Human Nature score** — from a separate **36-question morality quiz**
+  (Greed, Betrayal, Cruelty, Deceit, Apathy, Depravity). Every answer scores
+  −2…+2, so the total runs −72…+72, and each one comes back with what everyone
+  else said: *"61% of people gave the same answer."* The report turns it into a
+  verdict — **Sanctimonious / Decent / Compromised / Rotten / Irredeemable** —
+  a per-vice breakdown, and where you rank against everyone who's taken it.
+- **Matches** — a match takes four things: you both took the morality quiz, you
+  each rated the other over other people, you each picked the other **at least
+  3 times**, and your Human Nature scores land **within 25 points**. On a match,
+  you each see the other's **socials** (Instagram, etc.) so you can reach out.
 
 Socials stay private until you match. Photos are shown only inside the rating
 games; questionnaire answers are never shown to anyone.
+
+## Photos: review and storage
+
+**Nothing is auto-approved.** Every photo sits `pending` until an account listed
+in `ADMIN_EMAILS` approves it in the **Review** tab — no classifier can publish
+one on its own. Automated screening only ever *rejects* (a declared age under 18
+is refused outright) or *flags for a human*.
+
+Stored photos never touch `users.json`. On upload each image is re-encoded by
+`sharp`, which destroys **EXIF — including the GPS coordinates a phone photo
+carries** — then encrypted with AES-256-GCM under a key derived from `PHOTO_KEY`
+and written to `$DATA_DIR/photos/`. They're served only through
+`/photos/:id?t=…`, where the token is an HMAC over (photo id, viewer's account
+id, expiry) valid for ten minutes: a photo link that leaks is dead on arrival
+and never worked in anyone else's session. Rejecting a photo deletes the bytes.
+
+The honest limits are written down in [DEPLOY.md](DEPLOY.md) — an admin sees
+every photo, a logged-in user can screenshot their screen, and encryption at
+rest protects stolen disks and backups rather than a compromised running
+server.
 
 ## Credits
 
