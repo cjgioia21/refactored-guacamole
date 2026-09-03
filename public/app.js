@@ -19,8 +19,8 @@ function avatar(u, cls = "") {
   // photoUrl is a short-lived, viewer-bound link minted by the server — the
   // client never sees image bytes or a stable photo id.
   return u.photoUrl
-    ? `<img class="${cls}" src="${esc(u.photoUrl)}" alt="${esc(u.name)}" referrerpolicy="no-referrer" onerror="this.replaceWith(Object.assign(document.createElement('div'),{className:'avatar ${cls}',textContent:'${esc((u.name||'?')[0])}'}))" />`
-    : `<div class="avatar ${cls}">${esc((u.name || "?")[0])}</div>`;
+    ? `<img class="${cls}" src="${esc(u.photoUrl)}" alt="" referrerpolicy="no-referrer" onerror="this.replaceWith(Object.assign(document.createElement('div'),{className:'avatar ${cls}'}))" />`
+    : `<div class="avatar ${cls}"></div>`;
 }
 const setCredits = (n) => { if (n != null) $("#credits").textContent = n; };
 
@@ -30,6 +30,10 @@ $("#tab-login").addEventListener("click", () => setAuthMode("login"));
 $("#tab-signup").addEventListener("click", () => setAuthMode("signup"));
 function setAuthMode(mode) {
   authMode = mode;
+  // Signing up is the act of accepting the terms, so the box and the state
+  // question only appear on that path.
+  $("#legal-consent").hidden = mode !== "signup";
+  $("#state-wrap").hidden = !(mode === "signup" && AUTH_CFG.country === "US");
   $("#tab-login").classList.toggle("active", mode === "login");
   $("#tab-signup").classList.toggle("active", mode === "signup");
   $("#auth-submit").textContent = mode === "login" ? "Log in" : "Create account";
@@ -39,7 +43,13 @@ function setAuthMode(mode) {
 $("#auth-form").addEventListener("submit", async (e) => {
   e.preventDefault();
   const email = e.target.email.value, password = e.target.password.value;
-  const { status, body } = await post(`/auth/${authMode}`, { email, password });
+  if (authMode === "signup" && !$("#legal-agree").checked) {
+    $("#auth-err").textContent = "You need to confirm you're 18+ and agree to the Terms.";
+    $("#auth-err").hidden = false;
+    return;
+  }
+  const state = e.target.state?.value || undefined;
+  const { status, body } = await post(`/auth/${authMode}`, { email, password, state });
   if (status >= 400) {
     $("#auth-err").textContent = body?.error || "Something went wrong.";
     $("#auth-err").hidden = false;
@@ -61,6 +71,7 @@ function show(view) {
   if (view === "buy") loadBuy();
   if (view === "admin") loadAdminQueue();
   if (view === "moral") loadMoralQuiz();
+  if (view === "boards") loadBoards();
   window.scrollTo(0, 0);
 }
 
@@ -70,9 +81,18 @@ $("#signout").addEventListener("click", async () => {
 });
 
 // ================= Bootstrap =================
+let AUTH_CFG = {};
 (async function start() {
   const cfg = await api("/auth/config");
-  if (cfg.body?.google) $("#google-wrap").hidden = false;
+  AUTH_CFG = cfg.body || {};
+  if (AUTH_CFG.google) $("#google-wrap").hidden = false;
+  const sel = $("#auth-form").state;
+  if (sel && AUTH_CFG.usStates) {
+    const blocked = new Set(AUTH_CFG.blockedStates || []);
+    sel.innerHTML = `<option value="">select…</option>` +
+      AUTH_CFG.usStates.map(([code, label]) =>
+        `<option value="${code}">${esc(label)}${blocked.has(code) ? " (not available)" : ""}</option>`).join("");
+  }
   initPhotoFlow();
   await buildForms();
   await boot();
@@ -123,6 +143,11 @@ async function boot() {
   const { status, body } = await api("/api/me");
   if (status === 401) return showLanding();
   me = body;
+  // A new terms version blocks everything until it's accepted.
+  if (me.outstanding?.length) {
+    const ok = await settleOutstanding(me.outstanding);
+    if (!ok) return showLanding();
+  }
   $("#view-landing").classList.remove("active");
   $("#app").hidden = false;
   setCredits(me.profile?.credits ?? 0);
@@ -136,8 +161,10 @@ async function boot() {
 function showLanding() { $("#app").hidden = true; $("#view-landing").classList.add("active"); }
 function showApp() { $("#view-landing").classList.remove("active"); $("#app").hidden = false; }
 function prefillName() {
+  const f = $("#onboard-form");
   const email = me.account?.email || "";
-  $("#onboard-form").name.value = email.split("@")[0] || "";
+  if (!f.name.value) f.name.value = email.split("@")[0] || "";
+  if (me.profile) { f.name.value = me.profile.name || ""; f.shareName.checked = !!me.profile.shareName; }
 }
 
 // ================= Forms (mh chips + questionnaire) =================
@@ -222,6 +249,7 @@ $("#onboard-form").addEventListener("submit", async (e) => {
   const predMoved = $("#pred-readout").classList.contains("set");
   const payload = {
     name: f.name.value,
+    shareName: !!f.shareName?.checked,
     age: f.age.value, gender, genderIdentity, orientation: f.orientation.value, ratingsFrom,
     prediction: predMoved ? f.prediction.value : null,
     mentalHealth: [...selectedMH], socials: { instagram: f.instagram.value },
@@ -269,6 +297,10 @@ async function loadHome() {
   $("#face-cards").innerHTML = cards.join("");
   $("#face-cards").querySelectorAll("[data-rate]").forEach((el) =>
     el.addEventListener("click", () => { rateGender = el.dataset.rate; show("matchup"); loadMatchup(); }));
+
+  $("#dilemma-grid").querySelectorAll("[data-dilemma]").forEach((el) => {
+    el.onclick = () => loadDilemma(el.dataset.dilemma);
+  });
 
   const matches = (await api("/api/matches")).body || [];
   const badge = $("#match-badge");
@@ -329,7 +361,7 @@ async function loadMatchup() {
   $("#matchup-empty").hidden = true;
   $("#matchup").innerHTML = [body.a, body.b].map((u, i) => `<button class="vs-card pick" type="button"
       data-win="${u.id}" data-lose="${u.id === body.a.id ? body.b.id : body.a.id}">
-      <span class="vs-photo">${avatar(u)}<span class="vs-name">${esc(u.name)}${u.age ? ", " + u.age : ""}</span></span>
+      <span class="vs-photo">${avatar(u)}${u.age ? `<span class="vs-name">${u.age}</span>` : ""}</span>
       <span class="pick-hint">click, or <b>${i === 0 ? "←" : "→"}</b></span></button>`).join("")
     + `<span class="vs-badge">VS</span>`;
   $("#matchup").querySelectorAll(".pick").forEach((btn) => btn.addEventListener("click", async () => {
@@ -410,12 +442,20 @@ async function loadReport() {
   const guessRows = r.games.map((g) => {
     let right;
     if (g.revealed && g.result) right = `<span class="reveal-val">${esc(g.result.pole)} · ${g.result.pct}%</span>`;
-    else if (g.ready) right = `<button class="reveal-btn" data-reveal="${g.key}">reveal · ${r.cost.reveal}✦</button>`;
+    else if (g.ready) {
+      const s = shortfall(r.cost.reveal, r.credits);
+      right = s
+        ? `<button class="reveal-btn short" data-reveal="${g.key}" title="${s.short}✦ short — about ${s.ratings.toLocaleString()} more ratings">reveal · ${r.cost.reveal}✦ <small>(${s.short}✦ short)</small></button>`
+        : `<button class="reveal-btn" data-reveal="${g.key}">reveal · ${r.cost.reveal}✦</button>`;
+    }
     else right = `<button class="reveal-btn collecting" data-play-game="${g.key}">still collecting · play →</button>`;
     return `<div class="guess-row"><span class="g-name">${g.emoji || ""} ${esc(g.label)}</span>${right}</div>`;
   }).join("");
   const guesses = `<div class="card"><div class="section-title" style="margin-top:0">🔮 What strangers guess about your photo</div>
     ${guessRows}<p class="meta" style="margin:12px 0 0">From direct guesses in the games. The more you <b>play &amp; rate</b>, the more your photo is shown to others.</p></div>`;
+
+  // The unsoftened numbers. This goes first, before anything reassuring.
+  const brutal = brutalCard(r);
 
   // Human Nature score — the number that decides who you can match with.
   const nature = natureCard(r);
@@ -433,17 +473,66 @@ async function loadReport() {
     ${almostSection(r.almost || [])}
     <label class="email-pref" style="margin-top:14px"><input type="checkbox" id="email-pref" ${r.emailOnNewData ? "checked" : ""}/> email me when new data is available</label>`;
 
-  $("#report").innerHTML = trueNatureCard(r, p) + attract + nature + tasteSection(r.taste) + guesses + fans + extra;
+  $("#report").innerHTML = trueNatureCard(r, p) + brutal + attract + nature + tasteSection(r.taste) + guesses + fans + extra;
 
   $("#tn-share")?.addEventListener("click", () => shareTrueNature(r));
   $("#go-matches")?.addEventListener("click", () => show("matches"));
   $("#go-moral")?.addEventListener("click", () => show("moral"));
-  $("#buy-pairs")?.addEventListener("click", () => spendAction("/api/buy-pairs", {}));
-  $("#report").querySelectorAll("[data-reveal]").forEach((b) => b.addEventListener("click", () => spendAction("/api/reveal", { game: b.dataset.reveal })));
+  $("#buy-pairs")?.addEventListener("click", () => spendAction("/api/buy-pairs", {}, r.cost.pairs));
+  $("#report").querySelectorAll("[data-reveal]").forEach((b) => b.addEventListener("click", () => spendAction("/api/reveal", { game: b.dataset.reveal }, r.cost.reveal)));
   $("#report").querySelectorAll("[data-play-game]").forEach((b) => b.addEventListener("click", () => playGame(b.dataset.playGame)));
-  $("#unlock-fans")?.addEventListener("click", () => spendAction("/api/unlock-fans", {}));
+  $("#unlock-fans")?.addEventListener("click", () => spendAction("/api/unlock-fans", {}, r.cost.fans));
+  wireShortfalls($("#report"));
   $("#email-pref")?.addEventListener("change", (e) => post("/api/email-pref", { on: e.target.checked }));
 }
+
+// The numbers with the padding taken out: how often you actually win, where you
+// actually rank, how many people passed you over, and how wrong you were about
+// yourself. Nothing here is estimated — it's all counted.
+function brutalCard(r) {
+  if (!r.matchups) {
+    return `<div class="card brutal"><div class="section-title" style="margin-top:0">📉 The numbers</div>
+      <p style="margin:0">Nobody has rated your photo yet. Come back once strangers have had a look.</p></div>`;
+  }
+  const rank = r.rank
+    ? `<div class="brutal-stat"><b>#${r.rank.rank.toLocaleString()}</b>
+         <span>of ${r.rank.of.toLocaleString()} rated photos</span>
+         <small>${r.rank.fromBottom.toLocaleString()} ${r.rank.fromBottom === 1 ? "person is" : "people are"} below you</small></div>` : "";
+  const win = r.winRate != null
+    ? `<div class="brutal-stat"><b>${r.winRate}%</b><span>of your matchups end in a win</span>
+         <small>${r.wins.toLocaleString()} won · ${r.losses.toLocaleString()} lost</small></div>` : "";
+  const passed = `<div class="brutal-stat"><b>${r.rejectedBy.toLocaleString()}</b>
+      <span>${r.rejectedBy === 1 ? "person has" : "people have"} seen you and picked someone else</span>
+      <small>${r.chosenBy.toLocaleString()} picked you</small></div>`;
+
+  // The self-prediction, finally used for something.
+  let pred = "";
+  if (r.prediction) {
+    const d = r.prediction;
+    const line = d.gap === 0 ? "You called it exactly."
+      : d.overrated
+        ? `You said <b>${d.predicted}</b>. They say <b>${d.actual}</b>. You overrated yourself by <b>${d.gap}</b> points.`
+        : `You said <b>${d.predicted}</b>. They say <b>${d.actual}</b>. You <i>underrated</i> yourself by <b>${Math.abs(d.gap)}</b> points.`;
+    const where = d.rankAmongDelusional
+      ? `<div class="meta">That's the ${ordinal(d.rankAmongDelusional)}-biggest gap of ${d.ofDelusional.toLocaleString()} people who guessed.</div>` : "";
+    pred = `<div class="brutal-pred">${line}${where}</div>`;
+  }
+
+  // The two dilemma verdicts, once enough people have weighed in.
+  const dilemmas = [
+    r.death?.leftPct != null && r.death.total >= 5
+      ? `<div class="brutal-verdict">🪦 <b>${r.death.leftPct}%</b> of people who had to choose left you to die. <span class="meta">${r.death.total} choices</span></div>` : "",
+    r.cheat?.yesPct != null && r.cheat.total >= 5
+      ? `<div class="brutal-verdict">💔 <b>${r.cheat.yesPct}%</b> would cheat on their partner for you. <span class="meta">${r.cheat.total} answers</span></div>` : "",
+  ].join("");
+
+  return `<div class="card brutal"><div class="section-title" style="margin-top:0">📉 The numbers</div>
+    <div class="brutal-grid">${rank}${win}${passed}</div>${pred}${dilemmas}</div>`;
+}
+const ordinal = (n) => {
+  const s = ["th", "st", "nd", "rd"], v = n % 100;
+  return n + (s[(v - 20) % 10] || s[v] || s[0]);
+};
 
 // The Human Nature score: the verdict band, the six vices, and where you sit
 // against everyone else. This is the card built to be screenshotted.
@@ -486,7 +575,7 @@ function almostSection(almost) {
       : m.blockedBy === "their-quiz" ? "they haven't taken the morality quiz yet"
       : `pick them ${m.picksToGo} more time${m.picksToGo === 1 ? "" : "s"} to unlock it`;
     return `<div class="card match-card">${avatar(m)}
-      <h3>${esc(m.name)}</h3><div class="meta">${why}</div></div>`;
+      <div class="meta">${why}</div></div>`;
   }).join("");
   return `<div class="section-title">So close <span class="hint">— you both picked each other, but a gate isn't cleared</span></div>
     <div class="cards">${rows}</div>`;
@@ -505,7 +594,8 @@ function lockedFansCard(f, credits) {
     </ul>
     <button class="unlock-btn" id="unlock-fans">🔒 unlock your full demographic report · ${f.cost}✦</button>
     <div class="progress" style="background:rgba(255,255,255,.25)"><i style="width:${pct}%;background:#fff"></i></div>
-    <div class="earn-line">${credits}✦ of ${f.cost}✦ earned — <b>rate photos</b> or <b>play rounds</b> to unlock it. Updates live as votes arrive.</div>
+    <div class="earn-line">${credits}✦ of ${f.cost}✦ earned — <b>rate photos</b> or <b>play rounds</b> to unlock it.</div>
+    ${shortfallHtml(f.cost, credits)}
   </div>`;
 }
 function fansCard(rep) {
@@ -521,9 +611,18 @@ function fansCard(rep) {
 }
 
 // Spend credits then refresh the report.
-async function spendAction(url, body) {
+async function spendAction(url, body, cost = null) {
   const { status, body: res } = await post(url, body);
-  if (status === 402) { alert("Not enough credits — rate more photos or play games to earn them."); return; }
+  if (status === 402) {
+    // Say exactly how short they are and exactly how long the grind is, then
+    // offer the shortcut. Honest numbers, no invented urgency.
+    const s = cost != null ? shortfall(cost, res?.credits ?? me.profile?.credits) : null;
+    toast(s
+      ? `${s.short}✦ short — ${s.ratings.toLocaleString()} more ratings, or buy.`
+      : "Not enough credits.");
+    if (s) show("buy");
+    return;
+  }
   if (res?.credits != null) { setCredits(res.credits); me.profile.credits = res.credits; }
   loadReport();
 }
@@ -603,6 +702,222 @@ function toast(msg) {
 }
 
 // ================= Matches (socials only) =================
+// ================= Credit pressure =================
+// Everywhere something is locked, say exactly how short you are and exactly how
+// long the grind is. The numbers are real — a true "900 more ratings" sells the
+// purchase better than a fake countdown, and it can't be screenshotted as a scam.
+function shortfall(cost, credits) {
+  const have = credits || 0;
+  const short = Math.max(0, cost - have);
+  if (!short) return null;
+  const perVote = 1 / (META.creditPerVotes || 50);
+  const ratings = Math.ceil(short / perVote);
+  const rounds = Math.ceil(short / (META.game?.reward || 2));
+  return { have, cost, short, ratings, rounds };
+}
+
+function shortfallHtml(cost, credits) {
+  const s = shortfall(cost, credits);
+  if (!s) return "";
+  return `<div class="shortfall">
+      <b>${s.short}✦ short.</b> You have ${s.have}✦ of ${s.cost}✦.
+      <div class="meta">That's ${s.ratings.toLocaleString()} more ratings, or ${s.rounds.toLocaleString()} perfect guessing rounds.</div>
+      <button class="buy-btn" data-view="buy">buy credits instead →</button>
+    </div>`;
+}
+
+// Wire any shortfall CTA rendered into a container.
+function wireShortfalls(root) {
+  root.querySelectorAll(".shortfall [data-view]").forEach((b) =>
+    b.addEventListener("click", () => show(b.dataset.view)));
+}
+
+// ================= Legal =================
+// Documents are readable without an account — nobody should have to sign up to
+// find out what they'd be agreeing to.
+async function openLegal(key, { acceptable = false } = {}) {
+  const { status, body } = await api(`/api/legal/${key}`);
+  if (status !== 200) return;
+  $("#legal-title").textContent = `${body.title} · v${body.version}`;
+  $("#legal-body").innerHTML = body.html;
+  $("#legal-body").scrollTop = 0;
+  $("#legal-foot").hidden = !acceptable;
+  $("#legal-modal").hidden = false;
+  return new Promise((resolve) => {
+    const close = (ok) => { $("#legal-modal").hidden = true; resolve(ok); };
+    $("#legal-close").onclick = () => close(false);
+    $("#legal-accept").onclick = () => close(true);
+  });
+}
+document.addEventListener("click", (e) => {
+  const el = e.target.closest("[data-legal]");
+  if (el) { e.preventDefault(); openLegal(el.dataset.legal); }
+});
+
+// A version bump forces re-acceptance before anything else works.
+async function settleOutstanding(outstanding) {
+  for (const key of outstanding) {
+    const agreed = await openLegal(key, { acceptable: true });
+    if (!agreed) { toast("You need to accept to keep using the site."); return false; }
+  }
+  const r = await post("/api/legal/accept", { docs: outstanding });
+  if (r.status !== 200) return false;
+  me.outstanding = r.body.outstanding;
+  return true;
+}
+
+// ================= The public boards =================
+async function loadBoards() {
+  const wrap = $("#boards");
+  const { status, body } = await api("/api/leaderboard");
+  if (status === 503) { $("#board-status").innerHTML = ""; wrap.innerHTML = `<p class="empty">The boards are switched off.</p>`; return; }
+  if (status !== 200) return;
+
+  $("#board-status").innerHTML = boardStatusCard(body.me, body);
+  $("#board-status").querySelector("#board-join")?.addEventListener("click", async () => {
+    // The agreement must be read and accepted in the same action as joining.
+    const agreed = await openLegal("board", { acceptable: true });
+    if (!agreed) return;
+    const r = await post("/api/board-optin", { on: true, agreementVersion: body.me.agreementVersion });
+    if (r.status !== 200) return toast(r.body?.error || "Couldn't join.");
+    toast("You're on the boards.");
+    loadBoards();
+  });
+  $("#board-status").querySelector("#board-leave")?.addEventListener("click", async () => {
+    await post("/api/board-optin", { on: false });
+    toast("Removed. You're off both boards.");
+    loadBoards();
+  });
+
+  if (!body.eligible) {
+    wrap.innerHTML = `<p class="empty">Nobody has opted in with enough ratings yet.</p>`;
+    return;
+  }
+  wrap.innerHTML = boardTable("👑 Highest rated", body.top, body.eligible)
+    + boardTable("💀 Lowest rated", body.bottom, body.eligible);
+}
+
+function boardStatusCard(me, board) {
+  if (me.optedIn) {
+    const note = me.eligible
+      ? `You're on the boards. ${board.eligible} ${board.eligible === 1 ? "person is" : "people are"} ranked.`
+      : `You've opted in, but you need ${me.minMatchups} matchups to appear — you have ${me.matchups}.`;
+    return `<div class="card board-status in"><b>You're in.</b>
+      <div class="meta">${note}</div>
+      <button class="danger" id="board-leave" style="margin-top:10px">Remove me from the boards</button>
+      <div class="meta" style="margin-top:8px">Removal is instant. We can't remove screenshots other people already took.</div></div>`;
+  }
+  return `<div class="card board-status out">
+    <b>You are not on the boards.</b>
+    <div class="meta">Opting in puts your photo on a ranked list of everyone who joined — <b>including a list of the lowest-rated people on the site</b>. You don't get to choose which one you land on.</div>
+    <div class="meta">It's off by default, it changes nothing else about your account, and you can leave in one click.</div>
+    <button class="outline" id="board-join" style="margin-top:10px">Read the agreement and join</button>
+  </div>`;
+}
+
+function boardTable(title, rows, total) {
+  if (!rows.length) return "";
+  return `<div class="section-title">${title}</div>
+    <div class="board-list">${rows.map((r) => `
+      <div class="board-row${r.you ? " you" : ""}">
+        <span class="board-rank">#${r.rank}</span>
+        <span class="board-photo">${avatar(r)}</span>
+        <span class="board-stats">
+          <b>${r.winRate == null ? "—" : r.winRate + "%"}</b>
+          <span class="meta">win rate · ${r.wins}W ${r.losses}L</span>
+          ${r.you ? `<span class="board-you">that's you</span>` : ""}
+        </span>
+      </div>`).join("")}</div>
+    <p class="meta" style="margin:6px 0 18px">of ${total} ranked</p>`;
+}
+
+// ================= Dilemma rounds =================
+// Two-photo "you can only save one" and one-photo "would you cheat". No right
+// answer, no accuracy — the point is what the target is told afterwards.
+const DILEMMAS = {
+  death: {
+    title: "You can only save one",
+    sub: "Both of them are going to die unless you choose. Pick who lives. They will be told how often they were the one you left.",
+  },
+  cheat: {
+    title: "Would you cheat on your partner for this person?",
+    sub: "Nobody is watching. They will be told what percentage of people said yes.",
+  },
+};
+let dilemmaKind = null;
+let dilemmaGender = null;
+
+async function loadDilemma(kind) {
+  dilemmaKind = kind || dilemmaKind || "death";
+  const meta = DILEMMAS[dilemmaKind];
+  show("dilemma");
+  $("#dilemma-title").textContent = meta.title;
+  $("#dilemma-sub").textContent = meta.sub;
+  await nextDilemma();
+}
+
+async function nextDilemma() {
+  const wrap = $("#dilemma-play");
+  const q = `?kind=${dilemmaKind}${dilemmaGender ? "&gender=" + dilemmaGender : ""}`;
+  const { status, body } = await api("/api/dilemma" + q);
+  if (status >= 400) {
+    versusKeys = null;
+    wrap.innerHTML = `<p class="empty">Not enough approved photos for that filter yet.</p>` + dilemmaFoot();
+    return wireDilemmaFoot();
+  }
+  let locked = false;
+  const answer = async (payload) => {
+    if (locked) return;
+    locked = true;
+    const r = await post("/api/dilemma", { kind: dilemmaKind, ...payload });
+    if (r.body?.creditEarned) toast("✦ +1 credit");
+    if (r.body?.credits != null) { setCredits(r.body.credits); if (me.profile) me.profile.credits = r.body.credits; }
+    setTimeout(nextDilemma, 300);
+  };
+
+  if (dilemmaKind === "cheat") {
+    versusKeys = null;
+    wrap.innerHTML = `<div class="cheat-round">
+        <div class="cheat-photo">${avatar(body.a)}</div>
+        <div class="cheat-actions">
+          <button class="primary" data-cheat="yes">Yes</button>
+          <button class="outline" data-cheat="no">No</button>
+        </div>
+      </div>` + dilemmaFoot();
+    wrap.querySelectorAll("[data-cheat]").forEach((el) =>
+      el.addEventListener("click", () => answer({ aId: body.a.id, pick: el.dataset.cheat })));
+  } else {
+    wrap.innerHTML = `<div class="versus">
+        <button class="vs-card" type="button" data-pick="a"><span class="vs-photo">${avatar(body.a)}${body.a.age ? `<span class="vs-name">${body.a.age}</span>` : ""}</span><span class="pick-hint">save, or <b>←</b></span></button>
+        <div class="acc-badge death"><b>SAVE</b><span>ONE</span></div>
+        <button class="vs-card" type="button" data-pick="b"><span class="vs-photo">${avatar(body.b)}${body.b.age ? `<span class="vs-name">${body.b.age}</span>` : ""}</span><span class="pick-hint">save, or <b>→</b></span></button>
+      </div>` + dilemmaFoot();
+    const choose = (pick) => answer({ aId: body.a.id, bId: body.b.id, pick });
+    wrap.querySelectorAll("[data-pick]").forEach((el) => el.addEventListener("click", () => choose(el.dataset.pick)));
+    versusKeys = choose; // ←/→ keys
+  }
+  wireDilemmaFoot();
+}
+
+const dilemmaFoot = () => `<div class="versus-foot">
+    <span class="voting-on">voting on: <a data-dg="man" class="${dilemmaGender === "man" ? "on" : ""}">men</a> <a data-dg="woman" class="${dilemmaGender === "woman" ? "on" : ""}">women</a></span>
+  </div>
+  <div class="games-nav">dilemmas: ${Object.entries(DILEMMAS).map(([k, d]) =>
+    `<a class="${k === dilemmaKind ? "on" : ""}" data-dilemma-go="${k}">${esc(d.title.toLowerCase())}</a>`).join(" · ")} · <a data-dilemma-go="home">home</a></div>`;
+
+function wireDilemmaFoot() {
+  const wrap = $("#dilemma-play");
+  wrap.querySelectorAll("[data-dg]").forEach((el) => el.addEventListener("click", () => {
+    dilemmaGender = dilemmaGender === el.dataset.dg ? null : el.dataset.dg;
+    nextDilemma();
+  }));
+  wrap.querySelectorAll("[data-dilemma-go]").forEach((el) => el.addEventListener("click", () => {
+    const k = el.dataset.dilemmaGo;
+    if (k === "home") { versusKeys = null; return show("home"); }
+    loadDilemma(k);
+  }));
+}
+
 // ================= The morality quiz =================
 // Reuses the same question renderer as the taste quiz. The difference is that
 // every answer posts immediately and comes back with the confession stat —
@@ -757,7 +1072,7 @@ async function loadMatches() {
   const matches = (await api("/api/matches")).body || [];
   $("#matches-list").innerHTML = matches.length
     ? matches.map((m) => `<div class="card match-card">${avatar(m.user)}
-        <h3>${esc(m.user.name)}${m.user.age ? ", " + m.user.age : ""}</h3>
+        <h3>${m.user.name ? esc(m.user.name) : "Anonymous"}${m.user.age ? ", " + m.user.age : ""}</h3>
         <div class="meta">you picked them ${m.youPickRate}% · they picked you ${m.theyPickRate}%</div>
         <div class="meta">${m.yourPicks}× / ${m.theirPicks}× picked · nature gap ${m.natureGap}</div>
         ${socialLinks(m.user.socials)}</div>`).join("")
@@ -828,9 +1143,9 @@ async function playGame(gameKey) {
       const av = acc();
       wrap.innerHTML = `<p class="game-sub">For every ${cfg.need}/${cfg.rounds} correct, earn ${cfg.reward} credits.</p>
         <div class="versus">
-          <button class="vs-card" type="button" data-pick="a"><span class="vs-photo">${avatar(a)}<span class="vs-name">${esc(a.name)}</span></span><span class="pick-hint">click, or <b>←</b></span></button>
+          <button class="vs-card" type="button" data-pick="a"><span class="vs-photo">${avatar(a)}${a.age ? `<span class="vs-name">${a.age}</span>` : ""}</span><span class="pick-hint">click, or <b>←</b></span></button>
           <div class="acc-badge"><b>${av == null ? "—" : av + "%"}</b><span>ACCURACY</span><small>${base.total + sessionVotes} pairs</small></div>
-          <button class="vs-card" type="button" data-pick="b"><span class="vs-photo">${avatar(b)}<span class="vs-name">${esc(b.name)}</span></span><span class="pick-hint">click, or <b>→</b></span></button>
+          <button class="vs-card" type="button" data-pick="b"><span class="vs-photo">${avatar(b)}${b.age ? `<span class="vs-name">${b.age}</span>` : ""}</span><span class="pick-hint">click, or <b>→</b></span></button>
         </div>
         <div class="versus-foot">
           <span>${sessionVotes} this session · ${base.total + sessionVotes} all time</span>

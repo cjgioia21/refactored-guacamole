@@ -23,6 +23,10 @@ won't work). Any of the paths below works.
   | `ADMIN_EMAILS` | to review photos | comma-separated admin logins, e.g. `you@example.com`. Only these accounts see the **Review** tab. Nothing is published until one of them approves it. |
   | `PHOTO_HOURLY_BUDGET` | optional | photo fetches per account per hour (default 400). Exceeding it returns 429 and logs the account. |
   | `MODERATION_PROVIDER` | optional | `none` (default) = manual-only screening. |
+  | `LEGAL_ENTITY` / `LEGAL_PROVINCE` / `LEGAL_CONTACT` / `LEGAL_EFFECTIVE_DATE` | **before launch** | filled into the Terms, Privacy Policy and Leaderboard Terms. Leave them unset and the documents ship with placeholder text naming no real entity. |
+  | `BLOCKED_COUNTRIES` | optional | ISO codes, comma-separated. Defaults to the EU/EEA + UK. |
+  | `BLOCKED_US_STATES` | optional | defaults to `IL` (Illinois BIPA). |
+  | `BOARDS_ENABLED` | optional | set to `0` to switch the public leaderboards off entirely. |
   | `GOOGLE_CLIENT_ID` / `GOOGLE_CLIENT_SECRET` / `OAUTH_REDIRECT` | optional | enables the "Sign in with Google" button; email/password works without them |
 
 > Persistence note: JSON files are fine for launch/small scale. Photos are
@@ -30,6 +34,45 @@ won't work). Any of the paths below works.
 > `users.json` stays small. The remaining limit is that it's rewritten in full
 > on every vote, which holds to roughly a thousand profiles. Past that, move to
 > a database (`src/store.js` is the only file that reads/writes profile data).
+
+## Before you launch: the legal setup
+
+Three documents live in `legal/` and are served at `/api/legal/:doc`
+(`terms`, `privacy`, `board`). They are a **thorough draft, not legal advice.**
+Have a lawyer read them before you take a single payment or a single photo.
+
+1. **Fill in the placeholders** with `LEGAL_ENTITY`, `LEGAL_PROVINCE`,
+   `LEGAL_CONTACT` and `LEGAL_EFFECTIVE_DATE`. Unset, the documents name no real
+   entity and are worth very little.
+2. **Acceptance is recorded per account** — document key, version, timestamp and
+   IP, stored in `accounts.json`. Bumping a `version` in `src/legal.js` forces
+   every user to re-accept at their next request. An agreement you cannot prove
+   someone accepted is close to unenforceable; this is the part most sites skip.
+3. **Set `ADMIN_EMAILS`.** Nothing is published until a human approves it, so
+   without an admin the site has no working photo pipeline at all.
+4. **Confirm your payment processor will take this business, in writing, before
+   you build billing on it.** Stripe and PayPal both prohibit certain sexual
+   content, and being cut off after launch with customer balances outstanding is
+   a far worse problem than being told no in advance.
+
+### Regional blocking
+`src/geo.js` blocks the EU/EEA, the UK, and Illinois, because this site collects
+political opinions, sexual history, orientation and health data (GDPR Article 9
+special-category data) and stores face photographs (Illinois BIPA treats these as
+biometric identifiers, with statutory damages per person per violation).
+
+**Country detection needs an upstream header.** Put Cloudflare in front of nginx
+— it is free and sets `CF-IPCountry` on every request. Without such a header the
+gate **fails open**, because failing closed would lock out every user the moment
+a proxy config changed.
+
+**US state detection is the weak link, and you should know it.** Free
+country-level headers do not carry state. Illinois is enforced by a required
+state selector at signup plus a clause in the Terms — a good-faith and
+contractual control, not a technical one. If you want it to actually hold, wire
+a geo-IP database (MaxMind GeoLite2 is free with an account) into
+`geo.stateOf()`. And a VPN defeats all of it, as it does every geo-block on the
+web.
 
 ## Photo storage — what to know before you launch
 

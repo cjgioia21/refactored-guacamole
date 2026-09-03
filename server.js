@@ -11,10 +11,13 @@ import { MORAL_QUESTIONS, VICES, MORAL_MIN_ANSWERED } from "./src/morality.js";
 import * as confessions from "./src/confessions.js";
 import * as photos from "./src/photos.js";
 import * as phototokens from "./src/phototokens.js";
+import * as legal from "./src/legal.js";
+import * as geo from "./src/geo.js";
 import {
   recordVote, report, guessOutcome, matchScore, mutualMatches, likes,
   GAMES, gameByKey, attractivenessBand, guessConsensus, fansReport, tasteReport, TASTES,
   NATURE_WINDOW, MIN_MUTUAL_PICKS, canMatch, matchGates, quizDone, axisValue, VERSUS_AXES,
+  leaderboard, boardEligible, BOARD_MIN_MATCHUPS, winRate, rankOf,
 } from "./src/engine.js";
 
 // Admin accounts, by email — set ADMIN_EMAILS="you@example.com,other@example.com".
@@ -41,6 +44,9 @@ const HOST = process.env.HOST || "0.0.0.0";
 // Behind a reverse proxy / PaaS load balancer, trust X-Forwarded-* so secure
 // cookies and https detection work.
 if (process.env.NODE_ENV === "production") app.set("trust proxy", 1);
+
+app.use(geo.geoGate); // regional restrictions — see src/geo.js for the honest limits
+app.get("/unavailable", (_req, res) => res.status(451).type("html").send(geo.unavailableHtml()));
 
 app.use(express.json({ limit: "1mb" })); // room for small uploaded data: URLs
 
@@ -97,10 +103,17 @@ function myProfile(req) {
   const account = auth.currentAccount(req);
   return account && account.profileId ? store.get(account.profileId) : null;
 }
+// The client's IP, honouring the proxy chain we already trust in production.
+const clientIp = (req) => req.ip || req.socket?.remoteAddress || null;
+
 // Require an onboarded profile; 401/409 otherwise. Sets req.profile.
 function requireProfile(req, res, next) {
   const account = auth.currentAccount(req);
   if (!account) return res.status(401).json({ error: "not authenticated" });
+  // An outstanding agreement blocks every write. The client turns this into
+  // the "accept the new terms" screen.
+  const owed = legal.outstanding(account);
+  if (owed.length) return res.status(451).json({ error: "agreement required", outstanding: owed });
   const profile = account.profileId ? store.get(account.profileId) : null;
   if (!profile) return res.status(409).json({ error: "no profile yet" });
   req.account = account;
@@ -118,9 +131,19 @@ function requireAdmin(req, res, next) {
 
 // ---------- Auth ----------
 app.post("/auth/signup", (req, res) => {
-  const { email, password } = req.body || {};
+  const { email, password, state } = req.body || {};
+  // Regional restrictions are checked at the door, not after the account exists.
+  const country = req.geo?.country || (state ? "US" : null);
+  const declared = { country, state: state ? String(state).toUpperCase() : req.geo?.state || null };
+  const regionError = geo.checkSignupRegion(declared);
+  if (regionError) return res.status(451).json({ error: regionError });
+
   const r = auth.signup(email, password);
   if (r.error) return res.status(400).json({ error: r.error });
+  auth.setRegion(r.account.id, declared);
+  // Creating an account is the act of accepting the terms — record it with the
+  // version and IP, so there's evidence rather than an assumption.
+  for (const key of legal.REQUIRED) auth.recordAgreement(r.account.id, key, legal.acceptanceRecord(key, clientIp(req)));
   auth.issueSession(res, r.account.id);
   res.status(201).json({ account: auth.publicAccount(r.account) });
 });
@@ -138,7 +161,14 @@ app.post("/auth/logout", (req, res) => {
   res.json({ ok: true });
 });
 
-app.get("/auth/config", (_req, res) => res.json({ google: auth.googleConfigured() }));
+app.get("/auth/config", (req, res) => res.json({
+  google: auth.googleConfigured(),
+  country: req.geo?.country || null,
+  // The state selector only matters for US visitors, and it's the only control
+  // standing between an Illinois resident and a BIPA claim. See src/geo.js.
+  usStates: geo.US_STATES,
+  blockedStates: [...geo.BLOCKED_STATES],
+}));
 
 app.get("/auth/google", (req, res) => {
   if (!auth.googleConfigured()) return res.status(503).send("Google sign-in is not configured on this server.");
@@ -167,8 +197,40 @@ app.get("/api/me", (req, res) => {
   res.json({
     account: auth.publicAccount(account),
     isAdmin: isAdmin(account),
+    outstanding: legal.outstanding(account),
     profile: profile ? store.ownerView(profile, account.id) : null,
   });
+});
+
+// ---------- Legal ----------
+// The documents themselves are public: nobody should have to create an account
+// to read what they'd be agreeing to.
+app.get("/api/legal/:doc", (req, res) => {
+  const key = req.params.doc;
+  const html = legal.docHtml(key);
+  if (!html) return res.status(404).json({ error: "unknown document" });
+  res.json({ key, title: legal.DOCS[key].title, version: legal.DOCS[key].version, html });
+});
+
+// What this account still has to accept before the app will work.
+app.get("/api/legal", (req, res) => {
+  const account = auth.currentAccount(req);
+  res.json({
+    docs: Object.fromEntries(Object.entries(legal.DOCS).map(([k, d]) => [k, { title: d.title, version: d.version }])),
+    outstanding: account ? legal.outstanding(account) : legal.REQUIRED,
+    accepted: account?.agreements || {},
+  });
+});
+
+app.post("/api/legal/accept", (req, res) => {
+  const account = auth.currentAccount(req);
+  if (!account) return res.status(401).json({ error: "not authenticated" });
+  const keys = Array.isArray(req.body?.docs) ? req.body.docs : [req.body?.doc];
+  const valid = keys.filter((k) => legal.DOCS[k]);
+  if (!valid.length) return res.status(400).json({ error: "unknown document" });
+  for (const key of valid) auth.recordAgreement(account.id, key, legal.acceptanceRecord(key, clientIp(req)));
+  const fresh = auth.accountById(account.id);
+  res.json({ ok: true, accepted: fresh.agreements, outstanding: legal.outstanding(fresh) });
 });
 
 // ---------- Questionnaire / meta ----------
@@ -401,6 +463,51 @@ app.post("/api/versus-guess", (req, res) => {
   res.json({ correct, higher });
 });
 
+// ---------- Dilemma rounds ----------
+// "You can only save one" (two photos) and "would you cheat for this person"
+// (one photo). No right answer, so no accuracy tracking — these only ever
+// aggregate onto the target, and they count toward the rating credit counter.
+app.get("/api/dilemma", requireProfile, (req, res) => {
+  const kind = req.query.kind;
+  if (kind !== "death" && kind !== "cheat") return res.status(400).json({ error: "unknown dilemma" });
+  let pool = store.visible().filter((u) => u.id !== req.profile.id);
+  if (req.query.gender) pool = pool.filter((u) => u.gender === req.query.gender);
+  const need = kind === "death" ? 2 : 1;
+  if (pool.length < need) return res.status(409).json({ error: "not enough profiles" });
+
+  const a = pool[Math.floor(Math.random() * pool.length)];
+  if (kind === "cheat") return res.json({ kind, a: store.publicView(a, req.account.id) });
+  let b = pool[Math.floor(Math.random() * pool.length)];
+  for (let g = 0; b.id === a.id && g < 50; g++) b = pool[Math.floor(Math.random() * pool.length)];
+  res.json({ kind, a: store.publicView(a, req.account.id), b: store.publicView(b, req.account.id) });
+});
+
+app.post("/api/dilemma", requireProfile, (req, res) => {
+  const { kind, aId, bId, pick } = req.body || {};
+  if (kind === "death") {
+    const a = store.get(aId), b = store.get(bId);
+    if (!a || !b || a.id === b.id || (pick !== "a" && pick !== "b")) return res.status(400).json({ error: "invalid choice" });
+    const saved = pick === "a" ? a : b, left = pick === "a" ? b : a;
+    store.recordDilemma(saved.id, "death", "saved");
+    store.recordDilemma(left.id, "death", "left");
+  } else if (kind === "cheat") {
+    const a = store.get(aId);
+    if (!a || (pick !== "yes" && pick !== "no")) return res.status(400).json({ error: "invalid choice" });
+    store.recordDilemma(a.id, "cheat", pick);
+  } else {
+    return res.status(400).json({ error: "unknown dilemma" });
+  }
+  // Dilemmas are ratings too — they count toward the same credit grind.
+  req.profile.votesCast = (req.profile.votesCast || 0) + 1;
+  let creditEarned = false;
+  if (req.profile.votesCast % CREDIT_PER_VOTES === 0) {
+    store.addCredits(req.profile.id, 1);
+    creditEarned = true;
+  }
+  store.save();
+  res.json({ ok: true, creditEarned, credits: req.profile.credits, votesCast: req.profile.votesCast });
+});
+
 app.get("/api/guess", (req, res) => {
   const axis = req.query.axis;
   if (!GUESS_AXES.includes(axis)) return res.status(400).json({ error: "unknown axis" });
@@ -480,6 +587,48 @@ app.post("/api/email-pref", requireProfile, (req, res) => {
 });
 
 // ---------- Buy credits ----------
+// ---------- The public boards ----------
+// Opt-in only, visible to signed-in users only, and switchable off entirely.
+const BOARDS_ENABLED = process.env.BOARDS_ENABLED !== "0";
+
+app.get("/api/leaderboard", requireProfile, (req, res) => {
+  if (!BOARDS_ENABLED) return res.status(503).json({ error: "boards are disabled" });
+  const board = leaderboard(store.visible(), { limit: 10 });
+  const decorate = (rows) => rows.map((r) => ({
+    ...r,
+    photoUrl: store.publicView(store.get(r.id), req.account.id).photoUrl,
+    you: r.id === req.profile.id,
+  }));
+  res.json({
+    ...board,
+    top: decorate(board.top),
+    bottom: decorate(board.bottom),
+    me: {
+      optedIn: !!req.profile.boardOptIn,
+      eligible: boardEligible(req.profile),
+      matchups: req.profile.matchups || 0,
+      minMatchups: BOARD_MIN_MATCHUPS,
+      agreementVersion: legal.DOCS.board.version,
+      accepted: req.profile.boardAgreementVersion === legal.DOCS.board.version,
+    },
+  });
+});
+
+// Joining requires accepting the separate board agreement in the same call.
+// Leaving requires nothing and happens immediately.
+app.post("/api/board-optin", requireProfile, (req, res) => {
+  if (!BOARDS_ENABLED) return res.status(503).json({ error: "boards are disabled" });
+  const on = !!req.body?.on;
+  if (on) {
+    if (req.body?.agreementVersion !== legal.DOCS.board.version) {
+      return res.status(400).json({ error: "you must accept the current Leaderboard Terms", version: legal.DOCS.board.version });
+    }
+    auth.recordAgreement(req.account.id, "board", legal.acceptanceRecord("board", clientIp(req)));
+  }
+  store.setBoardOptIn(req.profile.id, on, on ? legal.DOCS.board.version : null);
+  res.json({ ok: true, optedIn: on, eligible: boardEligible(req.profile) });
+});
+
 // ---------- Admin: photo approval queue ----------
 // Nothing is ever auto-approved — every photo waits here for a human decision.
 app.get("/api/admin/queue", requireAdmin, (req, res) => {

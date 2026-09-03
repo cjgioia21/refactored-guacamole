@@ -8,6 +8,8 @@ import {
   report, typeSummary, attractedGenders, likes, mutualMatches, pickRate,
   attractivenessBand, guessConsensus, fansReport, tasteReport, GAMES, TASTES, BASE_ELO, REVEAL_MIN,
   canMatch, matchGates, nearMatches, NATURE_WINDOW, MIN_MUTUAL_PICKS, MORAL_MIN, quizDone, axisValue,
+  winRate, rankOf, rejectedBy, chosenBy, predictionDelta, deathReport, cheatReport,
+  leaderboard, boardEligible, BOARD_MIN_MATCHUPS,
 } from "../src/engine.js";
 
 // Answer every morality question at the same signed value: -2 (saint) .. +2.
@@ -17,7 +19,8 @@ const moralAll = (value) =>
 function mkUser(id, answers, extra = {}) {
   const moral = extra.moralAnswers ?? moralAll(0);
   return {
-    id, name: id, traits: profileFromAnswers(answers),
+    id, name: id, shareName: false, traits: profileFromAnswers(answers),
+    wins: 0, losses: 0, photoStatus: "approved", boardOptIn: false,
     moralAnswers: moral, natureScore: moralScore(moral), moralAnswered: moralAnswered(moral),
     elo: BASE_ELO,
     matchups: 0, votesCast: 0, credits: 0, type: emptyAcc(), admirers: emptyAcc(),
@@ -306,4 +309,87 @@ test("the morality guessing axis reads the Human Nature score, not the trait vec
   assert.equal(guessOutcome(evil, "moral", "high").correct, true);
   assert.equal(guessOutcome(saint, "moral", "high").correct, false);
   assert.equal(guessOutcome(saint, "moral", "low").actualLabel, "the better person");
+});
+
+test("the pool is anonymous: names never leave the profile except to a match", () => {
+  const a = mkUser("a", answersAll(0)), b = mkUser("b", answersAll(0)), c = mkUser("c");
+  a.name = "Alex"; b.name = "Bella"; b.shareName = true;
+  const cShy = c; cShy.name = "Cara"; cShy.shareName = false;
+  for (let i = 0; i < MIN_MUTUAL_PICKS; i++) { recordVote(a, b, c); recordVote(b, a, c); }
+  const r = report(a, [a, b, c]);
+  assert.equal(r.name, undefined); // the report itself carries no name
+  assert.equal(r.matches[0].name, "Bella"); // shared
+  b.shareName = false;
+  assert.equal(report(a, [a, b, c]).matches[0].name, null); // withdrawn
+});
+
+test("recordVote tracks raw wins and losses, and winRate reports them plainly", () => {
+  const a = mkUser("a"), b = mkUser("b"), c = mkUser("c");
+  assert.equal(winRate(a), null); // never shown yet
+  recordVote(a, b, c); recordVote(a, b, c); recordVote(a, c, b);
+  assert.equal(b.wins, 2); assert.equal(b.losses, 1);
+  assert.equal(winRate(b), 67);
+  assert.equal(winRate(c), 33);
+});
+
+test("rankOf gives a position, and only ranks photos that have been shown", () => {
+  const pop = [mkUser("a"), mkUser("b"), mkUser("c"), mkUser("unseen")];
+  pop[0].elo = 1400; pop[1].elo = 1200; pop[2].elo = 1000;
+  for (const u of pop.slice(0, 3)) u.matchups = 10;
+  assert.deepEqual(rankOf(pop[0], pop), { rank: 1, of: 3, fromBottom: 3 });
+  assert.deepEqual(rankOf(pop[2], pop), { rank: 3, of: 3, fromBottom: 1 });
+  assert.equal(rankOf(pop[3], pop), null); // never shown -> not ranked, not "last"
+});
+
+test("rejectedBy counts distinct people, not votes", () => {
+  const target = mkUser("t"), other = mkUser("o");
+  const v1 = mkUser("v1"), v2 = mkUser("v2");
+  recordVote(v1, other, target); // v1 passed on the target
+  recordVote(v1, other, target); // ...twice; still one person
+  recordVote(v2, target, other); // v2 picked the target
+  const pop = [target, other, v1, v2];
+  assert.equal(rejectedBy(target, pop), 1);
+  assert.equal(chosenBy(target, pop), 1);
+});
+
+test("predictionDelta exposes how wrong you were about yourself", () => {
+  const pop = [mkUser("a"), mkUser("b"), mkUser("c"), mkUser("d")];
+  pop.forEach((u, i) => { u.elo = 1000 + i * 100; u.matchups = 10; u.prediction = 90; });
+  const worst = predictionDelta(pop[0], pop); // lowest elo, predicted 90
+  assert.equal(worst.predicted, 90);
+  assert.equal(worst.overrated, true);
+  assert.ok(worst.gap > 0);
+  const nope = mkUser("np"); nope.prediction = null;
+  assert.equal(predictionDelta(nope, pop), null);
+});
+
+test("dilemma reports only speak once there is something to say", () => {
+  const u = mkUser("u");
+  assert.equal(deathReport(u).leftPct, null);
+  u.deathVotes = { saved: 1, left: 3 };
+  assert.equal(deathReport(u).leftPct, 75);
+  u.cheatVotes = { yes: 2, no: 3 };
+  assert.equal(cheatReport(u).yesPct, 40);
+});
+
+test("the boards are opt-in, gated on real data, and empty by default", () => {
+  const pop = [mkUser("a"), mkUser("b"), mkUser("c")];
+  pop.forEach((u, i) => { u.elo = 1000 + i * 100; u.matchups = 100; u.photoStatus = "approved"; });
+  assert.equal(leaderboard(pop).eligible, 0); // nobody opted in
+
+  pop.forEach((u) => { u.boardOptIn = true; });
+  const board = leaderboard(pop);
+  assert.equal(board.eligible, 3);
+  assert.equal(board.top[0].id, "c"); // highest elo
+  assert.equal(board.bottom[0].id, "a"); // lowest
+  assert.equal(board.bottom[0].rank, 3); // true rank, not renumbered
+
+  // Too few matchups: opted in, but not exposed on a "worst rated" list yet.
+  pop[0].matchups = BOARD_MIN_MATCHUPS - 1;
+  assert.equal(boardEligible(pop[0]), false);
+  assert.equal(leaderboard(pop).eligible, 2);
+
+  // An unapproved photo never appears, opt-in or not.
+  pop[1].photoStatus = "pending";
+  assert.equal(boardEligible(pop[1]), false);
 });

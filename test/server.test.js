@@ -514,3 +514,179 @@ test("photo bytes are encrypted on disk and shredded when rejected", async () =>
   await (await adminClient())("POST", `/api/admin/photo/${p.id}`, { action: "reject", reason: "no" });
   assert.equal(get(id), null);
 });
+
+test("the API never leaks a name into the rating pool", async () => {
+  const a = client(), b = client();
+  await a("POST", "/auth/signup", { email: "anon-a@ex.com", password: "hunter2" });
+  await b("POST", "/auth/signup", { email: "anon-b@ex.com", password: "hunter2" });
+  const pa = (await a("POST", "/api/profile", { name: "Secret", gender: "woman", photo: await photoData(100) })).body;
+  const pb = (await b("POST", "/api/profile", { name: "AlsoSecret", gender: "woman", photo: await photoData(110) })).body;
+  await approve(pa.id, pb.id);
+
+  // Your own view keeps your name; everyone else's view of you has none.
+  assert.equal(pa.name, "Secret");
+  const users = (await b("GET", "/api/users")).body;
+  const seen = users.find((u) => u.id === pa.id);
+  assert.ok(seen);
+  assert.equal(seen.name, undefined);
+  assert.equal(JSON.stringify(users).includes("Secret"), false);
+
+  const one = (await b("GET", `/api/users/${pa.id}`)).body;
+  assert.equal(one.name, undefined);
+});
+
+test("a name reaches a match only when shared, and can be withdrawn", async () => {
+  const a = client(), b = client(), c = client();
+  for (const [cl, em] of [[a, "sn-a"], [b, "sn-b"], [c, "sn-c"]]) {
+    await cl("POST", "/auth/signup", { email: `${em}@ex.com`, password: "hunter2" });
+  }
+  const same = moralAll(0);
+  const pa = (await a("POST", "/api/profile", { name: "Ann", gender: "man", shareName: true, moralAnswers: same, socials: { instagram: "ann" } })).body;
+  const pb = (await b("POST", "/api/profile", { name: "Bee", gender: "woman", shareName: false, moralAnswers: same, socials: { instagram: "bee" } })).body;
+  const pc = (await c("POST", "/api/profile", { name: "Cee", gender: "woman", moralAnswers: same })).body;
+  await approve(pa.id, pb.id, pc.id);
+
+  for (let i = 0; i < 3; i++) await a("POST", "/api/vote", { winnerId: pb.id, loserId: pc.id });
+  for (let i = 0; i < 3; i++) await b("POST", "/api/vote", { winnerId: pa.id, loserId: pc.id });
+
+  // B didn't share -> A sees no name but does see socials.
+  const aSees = (await a("GET", "/api/matches")).body;
+  assert.equal(aSees.length, 1);
+  assert.equal(aSees[0].user.name, null);
+  assert.equal(aSees[0].user.socials.instagram, "bee");
+  // A did share -> B sees it.
+  assert.equal((await b("GET", "/api/matches")).body[0].user.name, "Ann");
+  // A turns it off -> gone immediately.
+  await a("POST", "/api/profile", { shareName: false });
+  assert.equal((await b("GET", "/api/matches")).body[0].user.name, null);
+});
+
+test("the report carries rank, win rate and the rejection count", async () => {
+  const a = client(), b = client(), c = client();
+  for (const [cl, em] of [[a, "st-a"], [b, "st-b"], [c, "st-c"]]) {
+    await cl("POST", "/auth/signup", { email: `${em}@ex.com`, password: "hunter2" });
+  }
+  const pa = (await a("POST", "/api/profile", { name: "Sa", gender: "man", photo: await photoData(120) })).body;
+  const pb = (await b("POST", "/api/profile", { name: "Sb", gender: "man", photo: await photoData(130) })).body;
+  const pc = (await c("POST", "/api/profile", { name: "Sc", gender: "man", photo: await photoData(140) })).body;
+  await approve(pa.id, pb.id, pc.id);
+
+  // c picks b over a, twice; then a over b once.
+  await c("POST", "/api/vote", { winnerId: pb.id, loserId: pa.id });
+  await c("POST", "/api/vote", { winnerId: pb.id, loserId: pa.id });
+  await c("POST", "/api/vote", { winnerId: pa.id, loserId: pb.id });
+
+  const rep = (await a("GET", "/api/report")).body;
+  assert.equal(rep.wins, 1);
+  assert.equal(rep.losses, 2);
+  assert.equal(rep.winRate, 33);
+  assert.equal(rep.rejectedBy, 1); // one distinct person passed on them
+  assert.equal(rep.chosenBy, 1);
+  assert.ok(rep.rank.rank >= 1 && rep.rank.of >= 2);
+});
+
+test("dilemma rounds tally onto the target and count toward credits", async () => {
+  const a = client(), x = client(), y = client();
+  for (const [cl, em] of [[a, "dl-a"], [x, "dl-x"], [y, "dl-y"]]) {
+    await cl("POST", "/auth/signup", { email: `${em}@ex.com`, password: "hunter2" });
+  }
+  await a("POST", "/api/profile", { name: "Judge", gender: "woman" });
+  const px = (await x("POST", "/api/profile", { name: "X", gender: "man", photo: await photoData(160) })).body;
+  const py = (await y("POST", "/api/profile", { name: "Y", gender: "man", photo: await photoData(170) })).body;
+  await approve(px.id, py.id);
+
+  assert.equal((await a("GET", "/api/dilemma?kind=death&gender=man")).status, 200);
+  const saved = await a("POST", "/api/dilemma", { kind: "death", aId: px.id, bId: py.id, pick: "a" });
+  assert.equal(saved.status, 200);
+  assert.equal(saved.body.votesCast, 1);
+  await a("POST", "/api/dilemma", { kind: "cheat", aId: px.id, pick: "yes" });
+  await a("POST", "/api/dilemma", { kind: "cheat", aId: px.id, pick: "no" });
+
+  const rep = (await x("GET", "/api/report")).body;
+  assert.equal(rep.death.saved, 1);
+  assert.equal(rep.cheat.yes, 1);
+  assert.equal(rep.cheat.no, 1);
+  assert.equal((await y("GET", "/api/report")).body.death.left, 1);
+
+  assert.equal((await a("POST", "/api/dilemma", { kind: "nope", aId: px.id, pick: "yes" })).status, 400);
+  assert.equal((await a("POST", "/api/dilemma", { kind: "cheat", aId: px.id, pick: "maybe" })).status, 400);
+});
+
+test("boards are opt-in, require the agreement, and drop you instantly on opt-out", async () => {
+  const a = client();
+  await a("POST", "/auth/signup", { email: "bd-a@ex.com", password: "hunter2" });
+  const pa = (await a("POST", "/api/profile", { name: "Bo", gender: "man", photo: await photoData(180) })).body;
+  await approve(pa.id);
+
+  const before = (await a("GET", "/api/leaderboard")).body;
+  assert.equal(before.me.optedIn, false);
+  assert.equal(before.me.eligible, false);
+
+  // Joining without accepting the current agreement version is refused.
+  assert.equal((await a("POST", "/api/board-optin", { on: true })).status, 400);
+  assert.equal((await a("POST", "/api/board-optin", { on: true, agreementVersion: "0.0" })).status, 400);
+
+  const joined = await a("POST", "/api/board-optin", { on: true, agreementVersion: before.me.agreementVersion });
+  assert.equal(joined.status, 200);
+  assert.equal((await a("GET", "/api/leaderboard")).body.me.optedIn, true);
+  // Opted in but under the matchup floor -> still not on the board itself.
+  assert.equal((await a("GET", "/api/leaderboard")).body.me.eligible, false);
+
+  await a("POST", "/api/board-optin", { on: false });
+  assert.equal((await a("GET", "/api/leaderboard")).body.me.optedIn, false);
+});
+
+test("legal documents are public, and acceptance is recorded per version", async () => {
+  const anon = client();
+  const terms = await anon("GET", "/api/legal/terms");
+  assert.equal(terms.status, 200);
+  assert.ok(terms.body.html.includes("<h1>"));
+  assert.match(terms.body.html, /18/);
+  assert.equal((await anon("GET", "/api/legal/nope")).status, 404);
+
+  const a = client();
+  await a("POST", "/auth/signup", { email: "legal@ex.com", password: "hunter2" });
+  const me = (await a("GET", "/api/me")).body;
+  // Signing up records acceptance of the required documents.
+  assert.deepEqual(me.outstanding, []);
+  assert.equal(me.account.agreements.terms.version, terms.body.version);
+  assert.ok(me.account.agreements.terms.acceptedAt);
+  assert.ok(me.account.agreements.privacy);
+  // The board agreement is separate and not accepted by signing up.
+  assert.equal(me.account.agreements.board, undefined);
+});
+
+test("regional restrictions refuse blocked countries and Illinois", async () => {
+  // Country blocking, via the edge header the deployment is expected to set.
+  const blocked = await fetch(base + "/auth/config", { headers: { "CF-IPCountry": "DE" } });
+  assert.equal(blocked.status, 451);
+  const uk = await fetch(base + "/api/legal/terms", { headers: { "CF-IPCountry": "GB" } });
+  assert.equal(uk.status, 451);
+  const ok = await fetch(base + "/auth/config", { headers: { "CF-IPCountry": "CA" } });
+  assert.equal(ok.status, 200);
+
+  // Illinois: refused at signup on the declared state.
+  const il = await fetch(base + "/auth/signup", {
+    method: "POST",
+    headers: { "Content-Type": "application/json", "CF-IPCountry": "US" },
+    body: JSON.stringify({ email: "illinois@ex.com", password: "hunter2", state: "IL" }),
+  });
+  assert.equal(il.status, 451);
+  assert.match((await il.json()).error, /Illinois/);
+
+  // A US signup with no state at all is refused too, rather than waved through.
+  const noState = await fetch(base + "/auth/signup", {
+    method: "POST",
+    headers: { "Content-Type": "application/json", "CF-IPCountry": "US" },
+    body: JSON.stringify({ email: "nostate@ex.com", password: "hunter2" }),
+  });
+  assert.equal(noState.status, 451);
+
+  // A permitted state goes through.
+  const ny = await fetch(base + "/auth/signup", {
+    method: "POST",
+    headers: { "Content-Type": "application/json", "CF-IPCountry": "US" },
+    body: JSON.stringify({ email: "newyork@ex.com", password: "hunter2", state: "NY" }),
+  });
+  assert.equal(ny.status, 201);
+});

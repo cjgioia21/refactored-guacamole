@@ -70,6 +70,7 @@ export function create(p = {}) {
     prediction: predict(p.prediction), // self-predicted attractiveness 0..100
     mentalHealth: cleanFlags(p.mentalHealth), // [] or e.g. ["anxiety"]
     socials: normSocials(p.socials), // PRIVATE — revealed only to a mutual match
+    shareName: !!p.shareName, // reveal your name to matches? off unless you say so
     answers: p.answers || {},
     traits: profileFromAnswers(p.answers || {}),
     moralAnswers: p.moralAnswers || {}, // the morality quiz — separate bank
@@ -91,6 +92,13 @@ export function create(p = {}) {
     guessStats: {}, // { axis: { correct, total } } guessing-game accuracy
     guessesReceived: {}, // { axis: { low, high } } what strangers guessed about you
     fans: { n: 0, mh: {}, gender: {}, ageSum: 0, ageN: 0 }, // fan demographics
+    wins: 0, // matchups won — the raw fact behind the win rate
+    losses: 0, // matchups lost
+    deathVotes: { saved: 0, left: 0 }, // "you can only save one"
+    cheatVotes: { yes: 0, no: 0 }, // "would you cheat for this person"
+    boardOptIn: false, // appear on the public winner/loser boards (opt-in only)
+    boardAgreedAt: null, // when they accepted the separate board agreement
+    boardAgreementVersion: null,
     revealed: {}, // { gameKey: true } trait reveals you've purchased
     fansUnlocked: false, // "Who Likes You?" demographic report unlocked
     emailOnNewData: false,
@@ -152,6 +160,18 @@ export function moderationQueue({ limit = 50 } = {}) {
   };
 }
 
+// Join or leave the public boards. Leaving takes effect immediately — that
+// promise is made in the board agreement, so it must not be deferred or queued.
+export function setBoardOptIn(id, on, agreementVersion = null) {
+  const user = get(id);
+  if (!user) return null;
+  user.boardOptIn = !!on;
+  user.boardAgreedAt = on ? new Date().toISOString() : null;
+  user.boardAgreementVersion = on ? agreementVersion : null;
+  persist();
+  return user;
+}
+
 // Only approved photos are ever shown to other users.
 export function visible() {
   return users.filter((u) => u.photoStatus === "approved");
@@ -179,6 +199,7 @@ export function update(id, p = {}) {
   if (p.prediction != null) user.prediction = predict(p.prediction);
   if (p.mentalHealth != null) user.mentalHealth = cleanFlags(p.mentalHealth);
   if (p.socials != null) user.socials = normSocials(p.socials);
+  if (p.shareName != null) user.shareName = !!p.shareName;
   if (p.answers != null) {
     user.answers = { ...(user.answers || {}), ...p.answers }; // merge, don't clobber
     user.traits = profileFromAnswers(user.answers);
@@ -244,6 +265,24 @@ export function recordGuess(id, axis, correct) {
   persist();
 }
 
+// Record a dilemma vote about a target. These are preference votes with no
+// right answer, so they never touch the guessing accuracy stats.
+export function recordDilemma(targetId, kind, choice) {
+  const target = get(targetId);
+  if (!target) return null;
+  if (kind === "death" && (choice === "saved" || choice === "left")) {
+    const d = target.deathVotes || (target.deathVotes = { saved: 0, left: 0 });
+    d[choice] += 1;
+  } else if (kind === "cheat" && (choice === "yes" || choice === "no")) {
+    const c = target.cheatVotes || (target.cheatVotes = { yes: 0, no: 0 });
+    c[choice] += 1;
+  } else {
+    return null;
+  }
+  persist();
+  return target;
+}
+
 // Record what a stranger guessed ABOUT a target's photo (low/high on an axis).
 export function recordGuessAbout(targetId, axis, guessed) {
   const target = get(targetId);
@@ -292,7 +331,16 @@ export function guessStats(id) {
 // Matched-user view: reveals socials, which a mutual match consents to.
 export function matchView(u, viewerId) {
   if (!u) return null;
-  return { id: u.id, name: u.name, photoUrl: urlFor(u.photo, viewerId), age: u.age, gender: u.gender, socials: u.socials, natureScore: u.natureScore || 0 };
+  // A match sees socials, and the name ONLY if they chose to share it.
+  return {
+    id: u.id,
+    name: u.shareName ? u.name : null,
+    photoUrl: urlFor(u.photo, viewerId),
+    age: u.age,
+    gender: u.gender,
+    socials: u.socials,
+    natureScore: u.natureScore || 0,
+  };
 }
 
 // The morality report for a profile owner: score, verdict, per-vice breakdown.
@@ -318,8 +366,8 @@ export function publicView(u, viewerId) {
   if (!u) return null;
   return {
     id: u.id,
-    name: u.name,
-    // A short-lived URL bound to this viewer — never the photo id or its bytes.
+    // No name. The rating pool is anonymous: a face, an age, nothing else.
+    // A first initial is an identifier too, so there is no fallback either.
     photoUrl: urlFor(u.photo, viewerId),
     age: u.age,
     gender: u.gender,
@@ -339,7 +387,10 @@ export function ownerView(u, viewerId) {
   if (!u) return null;
   return {
     ...publicView(u, viewerId),
+    name: u.name, // your own name, for the profile form
+    shareName: !!u.shareName,
     hasPhoto: !!u.photo,
+    boardOptIn: !!u.boardOptIn,
     accountLocked: !!u.accountLocked,
     moderation: {
       flags: u.moderation?.flags || [],
@@ -356,7 +407,7 @@ export function adminView(u, viewerId) {
   if (!u) return null;
   return {
     id: u.id,
-    name: u.name,
+    name: u.name, // reviewers see names; the privacy policy says so plainly
     photoUrl: urlFor(u.photo, viewerId),
     age: u.age,
     gender: u.gender,

@@ -48,6 +48,10 @@ export function recordVote(voter, winner, loser) {
   loser.elo = lElo;
   winner.matchups = (winner.matchups || 0) + 1;
   loser.matchups = (loser.matchups || 0) + 1;
+  // Raw win/loss tallies. Elo is a smoothed opinion; these are the plain facts,
+  // and the report shows them without softening.
+  winner.wins = (winner.wins || 0) + 1;
+  loser.losses = (loser.losses || 0) + 1;
 
   // Voter is attracted to the winner -> learn the voter's "type".
   learnPreference(voter.type, winner, voter);
@@ -275,19 +279,28 @@ export function findMatches(user, population, { limit = 10 } = {}) {
 export function report(user, population) {
   return {
     id: user.id,
-    name: user.name,
     matchups: user.matchups || 0,
     elo: Math.round(user.elo),
     attractivenessPercentile: percentile(user, population),
     natureScore: user.natureScore || 0,
+    // The unsoftened numbers.
+    winRate: winRate(user),
+    wins: user.wins || 0,
+    losses: user.losses || 0,
+    rank: rankOf(user, population),
+    rejectedBy: rejectedBy(user, population),
+    chosenBy: chosenBy(user, population),
+    prediction: predictionDelta(user, population),
+    death: deathReport(user),
+    cheat: cheatReport(user),
     likedBy: describe(user.admirers.vector), // trait profile of admirers
     yourType: typeSummary(user), // learned from the photos you chose
     selfTraits: describe(user.traits),
     // Mutual matches: you both rated each other over others -> messaging unlocked.
     matches: mutualMatches(user, population, { limit: 12 }).map((m) => ({
       id: m.user.id,
-      name: m.user.name,
-      photo: m.user.photo,
+      // Name only if they chose to share it with matches.
+      name: m.user.shareName ? m.user.name : null,
       youPickRate: m.youPickRate,
       theyPickRate: m.theyPickRate,
       natureGap: m.natureGap,
@@ -298,13 +311,12 @@ export function report(user, population) {
     // The photo is left off here: only the server can mint a viewer-bound
     // photo URL, so it decorates these before they go out.
     almost: nearMatches(user, population, { limit: 6 }).map((m) => ({
-      id: m.user.id, name: m.user.name,
+      id: m.user.id,
       blockedBy: m.blockedBy, picksToGo: m.picksToGo, natureGap: m.natureGap,
     })),
     // Suggested profiles (predicted mutual attraction) to go rate next.
     suggestions: findMatches(user, population, { limit: 4 }).map((m) => ({
       id: m.user.id,
-      name: m.user.name,
       score: m.score,
     })),
   };
@@ -339,6 +351,105 @@ export function guessOutcome(target, axis, guess) {
 // Each game guesses one trait axis; poles are flavored display labels.
 // Each game maps to a trait axis, with a `title` for its page, a `selfQ` (the
 // "first, the same question about you" question id), and display `poles`.
+// ---------- The numbers, unsoftened ----------
+// Everything here except wins/losses is derived from data already stored.
+
+// The share of matchups you win. No confidence band, no cushioning.
+export function winRate(user) {
+  const w = user.wins || 0;
+  const total = w + (user.losses || 0);
+  return total ? Math.round((w / total) * 100) : null;
+}
+
+// An actual position, not a percentile: #4,182 of 5,003. Only profiles that
+// have actually been shown are ranked, so a brand-new photo isn't "last".
+export function rankOf(user, population) {
+  const ranked = population
+    .filter((u) => (u.matchups || 0) > 0)
+    .sort((a, b) => b.elo - a.elo);
+  const i = ranked.findIndex((u) => u.id === user.id);
+  if (i === -1) return null;
+  return { rank: i + 1, of: ranked.length, fromBottom: ranked.length - i };
+}
+
+// How many distinct people saw this photo next to another and picked the other.
+// Exact and free: every voter already stores ratings[targetId] = { w, l }.
+export function rejectedBy(user, population) {
+  return population.filter((o) => o.id !== user.id && (o.ratings?.[user.id]?.l || 0) > 0).length;
+}
+export function chosenBy(user, population) {
+  return population.filter((o) => o.id !== user.id && (o.ratings?.[user.id]?.w || 0) > 0).length;
+}
+
+// The gap between what you predicted about yourself and what strangers said.
+// Positive `gap` means you overrated yourself, which is the interesting case.
+export function predictionDelta(user, population) {
+  if (user.prediction == null || !(user.matchups || 0)) return null;
+  const actual = percentile(user, population);
+  const gap = user.prediction - actual;
+  const others = population
+    .filter((u) => u.id !== user.id && u.prediction != null && (u.matchups || 0) > 0)
+    .map((u) => u.prediction - percentile(u, population));
+  // Where your self-delusion ranks against everyone else's.
+  const worse = others.filter((g) => g > gap).length;
+  return {
+    predicted: user.prediction,
+    actual,
+    gap,
+    overrated: gap > 0,
+    rankAmongDelusional: others.length >= 3 ? worse + 1 : null,
+    ofDelusional: others.length >= 3 ? others.length + 1 : null,
+  };
+}
+
+// ---------- The public boards ----------
+// Opt-in only, and only once a profile has been rated enough that its position
+// means something. Someone who has been shown six times should never be able to
+// land on a board titled "worst rated on the site" off pure noise.
+export const BOARD_MIN_MATCHUPS = 50;
+
+export function boardEligible(user) {
+  return !!user.boardOptIn
+    && user.photoStatus === "approved"
+    && (user.matchups || 0) >= BOARD_MIN_MATCHUPS;
+}
+
+// Top N and bottom N among opted-in, eligible profiles. Returns the same shape
+// for both so the UI renders one component twice.
+export function leaderboard(population, { limit = 10 } = {}) {
+  const ranked = population.filter(boardEligible).sort((a, b) => b.elo - a.elo);
+  const row = (u, i) => ({
+    id: u.id,
+    rank: i + 1,
+    of: ranked.length,
+    winRate: winRate(u),
+    wins: u.wins || 0,
+    losses: u.losses || 0,
+    matchups: u.matchups || 0,
+  });
+  return {
+    eligible: ranked.length,
+    minMatchups: BOARD_MIN_MATCHUPS,
+    top: ranked.slice(0, limit).map(row),
+    // Keep true ranks on the bottom slice rather than renumbering from 1.
+    bottom: ranked.slice(-limit).map((u, i) => row(u, ranked.length - Math.min(limit, ranked.length) + i)).reverse(),
+  };
+}
+
+// ---------- Dilemma rounds ----------
+// Preference votes, not guesses — there is no correct answer, so these never
+// touch guessOutcome or the accuracy stats.
+export function deathReport(user) {
+  const d = user.deathVotes || { saved: 0, left: 0 };
+  const total = d.saved + d.left;
+  return { total, saved: d.saved, left: d.left, leftPct: total ? Math.round((d.left / total) * 100) : null };
+}
+export function cheatReport(user) {
+  const c = user.cheatVotes || { yes: 0, no: 0 };
+  const total = c.yes + c.no;
+  return { total, yes: c.yes, no: c.no, yesPct: total ? Math.round((c.yes / total) * 100) : null };
+}
+
 export const GAMES = [
   { key: "bodycount", label: "Bodycount", emoji: "🍑", axis: "bodycount", selfQ: "bc1",
     title: "Guess who has a higher bodycount", poles: ["lower bodycount", "higher bodycount"] },

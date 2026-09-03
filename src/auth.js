@@ -107,7 +107,12 @@ export function signup(email, password) {
   if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)) return { error: "invalid email" };
   if (String(password || "").length < 6) return { error: "password too short (min 6)" };
   if (byEmail(email)) return { error: "email already registered" };
-  const account = { id: randomUUID(), email, passwordHash: hashPassword(password), googleId: null, profileId: null, createdAt: new Date().toISOString() };
+  const account = {
+    id: randomUUID(), email, passwordHash: hashPassword(password), googleId: null, profileId: null,
+    agreements: {}, // { terms: {version, acceptedAt, ip}, ... } — see src/legal.js
+    region: null, // { country, state } captured at signup for the regional rules
+    createdAt: new Date().toISOString(),
+  };
   accounts.push(account);
   persist();
   return { account };
@@ -199,5 +204,23 @@ export async function googleExchange(code) {
 }
 
 export function publicAccount(a) {
-  return a ? { id: a.id, email: a.email, profileId: a.profileId, google: !!a.googleId } : null;
+  return a ? { id: a.id, email: a.email, profileId: a.profileId, google: !!a.googleId, agreements: a.agreements || {} } : null;
+}
+
+// Store an acceptance record against the account (see src/legal.js).
+export function recordAgreement(accountId, key, record) {
+  const a = accountById(accountId);
+  if (!a) return null;
+  a.agreements = { ...(a.agreements || {}), [key]: record };
+  persist();
+  return a;
+}
+
+// Where the account signed up from, used to enforce the regional restrictions.
+export function setRegion(accountId, region) {
+  const a = accountById(accountId);
+  if (!a) return null;
+  a.region = region;
+  persist();
+  return a;
 }

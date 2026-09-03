@@ -32,6 +32,43 @@ others and pick who's more attractive. From those choices TrueHumanNature builds
 Socials stay private until you match. Photos are shown only inside the rating
 games; questionnaire answers are never shown to anyone.
 
+## The numbers it shows you
+
+Nothing is softened. The report leads with your **actual rank** ("#4,182 of
+5,003 — 821 people are below you"), your **win rate**, and the exact count of
+**distinct people who saw your photo and picked someone else**. It also finally
+uses the self-prediction collected at signup: *"You said 78. They say 31."*
+
+Two rounds have no right answer and exist purely to produce a number about you:
+**"You can only save one"** (two photos, pick who lives — you're later told how
+often you were the one left) and **"Would you cheat on your partner for this
+person?"** (one photo, yes or no).
+
+**The rating pool is anonymous.** Strangers rating you see a photo and an age —
+never a name. Your name and socials reach only people you mutually match with,
+and your name only if you switch that on yourself.
+
+## The boards
+
+Opt-in, off by default, behind a **separate agreement** with its own version and
+acceptance record. Opting in puts your photo on a ranked list of everyone who
+joined — including the list of the **lowest-rated** people on the site, and you
+don't choose which end you land on. You need 50+ matchups to appear at all, so
+nobody is ranked "worst" off six votes of noise, and removal is one click and
+immediate. `BOARDS_ENABLED=0` switches the whole feature off.
+
+## Legal
+
+`legal/terms.md`, `legal/privacy.md` and `legal/board-terms.md` are served in
+the app and versioned; each account's acceptance is recorded with the version,
+timestamp and IP, and a version bump forces re-acceptance. **They are a thorough
+draft, not legal advice** — see [DEPLOY.md](DEPLOY.md) for what to fill in and
+what a lawyer needs to look at.
+
+The app blocks the **EU/UK and Illinois**, because of GDPR Article 9
+special-category data and Illinois BIPA respectively. DEPLOY.md documents how
+that works and, more importantly, where it is weak.
+
 ## Photos: review and storage
 
 **Nothing is auto-approved.** Every photo sits `pending` until an account listed

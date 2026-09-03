@@ -6,6 +6,7 @@ import sharp from "sharp";
 import * as store from "./store.js";
 import * as photos from "./photos.js";
 import * as auth from "./auth.js";
+import * as legal from "./legal.js";
 import { QUESTIONS } from "./questions.js";
 import { MORAL_QUESTIONS } from "./morality.js";
 import { recordVote, attractedGenders, guessOutcome, GAMES, natureGap, mutualMatches, MIN_MUTUAL_PICKS, NATURE_WINDOW } from "./engine.js";
@@ -79,13 +80,17 @@ if (store.all().length === 0) {
 
   // A demo account you can log into, linked to a real (rateable) profile.
   const acct = auth.signup("demo@truehumannature.com", "hunter2").account;
+  // Record the demo account's agreement acceptance, or it gets stopped by the
+  // consent gate on first login — same as any real account would be.
+  for (const key of legal.REQUIRED) auth.recordAgreement(acct.id, key, legal.acceptanceRecord(key, "127.0.0.1"));
   const demo = store.create({
     accountId: acct.id, name: "Demo", gender: "man", orientation: "straight", age: 27,
     mentalHealth: [], photo: await demoPhoto(99),
     socials: { instagram: "demo_thn" }, answers: answersFor(99), moralAnswers: moralFor(99, 0),
   });
   auth.linkProfile(acct.id, demo.id);
-  store.addCredits(demo.id, 120); // enough to reveal a few traits, not the 300 report
+  // No starting credits. The whole economy is that you have to grind or pay,
+  // so the demo account should feel exactly what a real new user feels.
 
   const pool = [...created, demo];
   // Demo photos are pre-approved so the seeded site is usable immediately.
@@ -130,6 +135,13 @@ if (store.all().length === 0) {
     const need = (a, b) => (a.ratings?.[b.id]?.l || 0) + MIN_MUTUAL_PICKS + 1;
     for (let i = 0, n = need(demo, p); i < n; i++) recordVote(demo, p, filler);
     for (let i = 0, n = need(p, demo); i < n; i++) recordVote(p, demo, filler);
+  }
+
+  // Opt most of the demo pool onto the boards so the feature is visible with
+  // seeded data. Real accounts are opt-out by default and always will be — this
+  // is demo data agreeing on behalf of nobody.
+  for (const u of created) {
+    if ((u.matchups || 0) >= 50) store.setBoardOptIn(u.id, true, "1.0");
   }
 
   // Strangers guess about photos (populates "what strangers guess about you").

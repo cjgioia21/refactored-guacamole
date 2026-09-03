@@ -123,7 +123,12 @@ export function get(id) {
     const decipher = createDecipheriv("aes-256-gcm", keyFor(id), iv);
     decipher.setAuthTag(tag);
     return Buffer.concat([decipher.update(blob.subarray(28)), decipher.final()]);
-  } catch {
+  } catch (err) {
+    // The file exists but won't decrypt: almost always a PHOTO_KEY mismatch
+    // (a different key than the one it was written with), occasionally
+    // corruption or tampering. Callers get null either way, but silence here
+    // makes a key mismatch look like a missing photo, which wastes hours.
+    console.warn(`[photos] ${id} exists but failed to decrypt — check PHOTO_KEY (${err.message})`);
     return null;
   }
 }

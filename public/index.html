@@ -24,6 +24,13 @@
       <form id="auth-form">
         <label>Email <input name="email" type="email" required autocomplete="email" /></label>
         <label>Password <input name="password" type="password" required minlength="6" autocomplete="current-password" /></label>
+        <label id="state-wrap" hidden>Your state
+          <select name="state"><option value="">select…</option></select>
+        </label>
+        <label class="check-inline" id="legal-consent" hidden>
+          <input type="checkbox" id="legal-agree" />
+          I am 18 or older and I agree to the <a class="link" data-legal="terms">Terms</a> and <a class="link" data-legal="privacy">Privacy Policy</a>.
+        </label>
         <p class="auth-err" id="auth-err" hidden></p>
         <button type="submit" class="primary" id="auth-submit">Log in</button>
       </form>
@@ -61,6 +68,7 @@
               <li><b>Just you</b> — anyone else must be cropped or blurred out.</li>
               <li><b>Actually you</b> — a real, recent photo of yourself. Not a celebrity or AI-generated.</li>
               <li><b>Everyone 18+, nothing sexual</b> — swimwear is fine; nudity is not.</li>
+              <li><b>You are anonymous while being rated</b> — strangers see your photo and age, never your name. Your name and socials are revealed only to people you match with, and only if you choose.</li>
             </ul>
           </div>
 
@@ -92,7 +100,13 @@
 
           <div class="card">
             <h3>About you <span class="hint">— private, powers your report</span></h3>
-            <label>Display name <input name="name" required maxlength="80" /></label>
+            <label>Name <span class="hint">— never shown in the rating pool</span>
+              <input name="name" maxlength="80" placeholder="optional" />
+            </label>
+            <label class="check-inline" style="margin-top:8px">
+              <input type="checkbox" name="shareName" />
+              Show my name to people I match with
+            </label>
             <label style="margin-top:12px">Gender
               <select name="gender">
                 <option value="woman|woman-cis">Woman (cis)</option>
@@ -133,6 +147,12 @@
         <div class="panel">
           <div class="face-cards" id="face-cards"></div>
 
+          <div class="panel-label">Dilemmas</div>
+          <div class="round-tiles" id="dilemma-grid">
+            <button class="round-tile" data-dilemma="death"><span class="tile-ico">🪦</span><b>You can only save one</b><span>two faces, one lives →</span></button>
+            <button class="round-tile" data-dilemma="cheat"><span class="tile-ico">💔</span><b>Would you cheat?</b><span>be honest →</span></button>
+          </div>
+
           <div class="panel-label">Guess &amp; earn</div>
           <div id="game-grid" class="round-tiles"></div>
 
@@ -141,6 +161,7 @@
             <button class="mini-tile" data-view="moral"><b>Morality quiz <span id="moral-badge" class="badge" hidden>!</span></b><span id="moral-meta">get your score →</span></button>
             <button class="mini-tile" data-view="report"><b>Your report</b><span>how you're seen →</span></button>
             <button class="mini-tile" data-view="matches"><b>Matches <span id="match-badge" class="badge" hidden>0</span></b><span>socials unlock →</span></button>
+            <button class="mini-tile" data-view="boards"><b>The boards</b><span id="board-meta">best and worst →</span></button>
             <button class="mini-tile" data-view="buy"><b>Buy credits</b><span>more data, faster →</span></button>
             <button class="mini-tile" id="edit-profile"><b>Your photo</b><span id="photo-meta">manage →</span></button>
             <button class="mini-tile" data-view="admin" id="admin-tile" hidden><b>Photo review</b><span id="admin-meta">approve photos →</span></button>
@@ -192,6 +213,22 @@
         <p class="privacy-note">Demo checkout — no real payment is taken; the credits are granted instantly. Wire a payment processor for live billing.</p>
       </section>
 
+      <!-- Public boards -->
+      <section id="view-boards" class="view">
+        <button class="back" data-view="home">← home</button>
+        <h1 class="display-title">The<br><b>boards</b></h1>
+        <div id="board-status"></div>
+        <div id="boards"></div>
+      </section>
+
+      <!-- Dilemma rounds -->
+      <section id="view-dilemma" class="view">
+        <button class="back" data-view="home">← home</button>
+        <h2 id="dilemma-title">Dilemma</h2>
+        <p class="sub" id="dilemma-sub"></p>
+        <div id="dilemma-play"></div>
+      </section>
+
       <!-- The morality quiz -->
       <section id="view-moral" class="view">
         <button class="back" data-view="home">← home</button>
@@ -226,6 +263,25 @@
       <button data-view="admin" id="tab-admin" hidden>Review</button>
     </nav>
   </div>
+
+  <div id="legal-modal" hidden>
+    <div class="legal-sheet">
+      <header class="legal-head">
+        <b id="legal-title"></b>
+        <button class="legal-close" id="legal-close" aria-label="close">×</button>
+      </header>
+      <article id="legal-body" class="legal-body"></article>
+      <footer class="legal-foot" id="legal-foot" hidden>
+        <button class="primary" id="legal-accept">I agree</button>
+      </footer>
+    </div>
+  </div>
+
+  <p class="footer-legal">
+    <a class="link" data-legal="terms">Terms</a> ·
+    <a class="link" data-legal="privacy">Privacy</a> ·
+    <a class="link" data-legal="board">Leaderboard Terms</a>
+  </p>
 
   <script src="app.js"></script>
 </body>
