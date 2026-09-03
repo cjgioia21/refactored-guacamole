@@ -33,8 +33,12 @@
   <!-- ===== App shell (signed in) ===== -->
   <div id="app" hidden>
     <header>
-      <div class="brand">True<b>Human</b>Nature <em>BETA</em></div>
-      <div class="head-right"><span class="creds"><span id="credits">0</span> ✦</span><a id="signout" class="signout">sign out</a></div>
+      <div class="brand">True<b>Human</b>Nature</div>
+      <div class="head-right">
+        <span class="acct" id="acct-email"></span>
+        <span class="credits-badge"><b id="credits">0</b><span>CREDITS</span></span>
+        <a id="signout" class="signout">sign out</a>
+      </div>
     </header>
 
     <main>
@@ -124,30 +128,25 @@
 
       <!-- Home -->
       <section id="view-home" class="view">
-        <div class="card">
-          <h2>What's your type?</h2>
-          <p class="sub">Rate photos and get an analysis of who you find attractive. Voting earns credits, too.</p>
-          <div class="btn-row"><button class="primary" data-rate="man">Rate men</button><button class="primary" data-rate="woman">Rate women</button></div>
-        </div>
-        <div class="card" id="manage-photos"></div>
-        <div class="card">
-          <h2>Your report</h2>
-          <p class="sub">See how attractive you're rated and the type of person into you.</p>
-          <button class="outline" data-view="report">View report →</button>
-        </div>
-        <div class="card">
-          <h2>Matches <span id="match-badge" class="badge" hidden>0</span></h2>
-          <p class="sub">You match when you've both rated each other over others. Socials unlock on a match.</p>
-          <button class="outline" data-view="matches">View matches →</button>
-        </div>
-        <div class="card">
-          <h2>Earn credits — Guessing games <span class="hint">→</span></h2>
-          <p class="sub">How well can you read people? For every 3 of 5 correct, earn 2 credits.</p>
-          <div id="game-grid" class="game-grid"></div>
-        </div>
-        <div class="card"><h2>Buy credits</h2><p class="sub">Don't wanna wait? Credits get you more data, faster.</p><button class="primary" data-view="buy">See credit packs</button></div>
-        <div class="card"><h2>Refer a friend</h2><p class="sub">Earn 15 ✦ when someone signs up with your link and rates 200 pairs.</p>
-          <div class="refer-row"><input id="refer-link" readonly /><button class="outline" id="refer-copy">copy</button></div>
+        <h1 class="display-title">Your <b>taste profile</b></h1>
+        <div class="panel">
+          <div class="face-cards" id="face-cards"></div>
+
+          <div class="panel-label">Guessing rounds</div>
+          <div id="game-grid" class="round-tiles"></div>
+
+          <div class="panel-label">Your stuff</div>
+          <div class="mini-tiles">
+            <button class="mini-tile" data-view="report"><b>Your report</b><span>how you're seen →</span></button>
+            <button class="mini-tile" data-view="matches"><b>Matches <span id="match-badge" class="badge" hidden>0</span></b><span>socials unlock →</span></button>
+            <button class="mini-tile" data-view="buy"><b>Buy credits</b><span>more data, faster →</span></button>
+            <button class="mini-tile" id="edit-profile"><b>Your photo</b><span id="photo-meta">manage →</span></button>
+          </div>
+
+          <div class="refer">
+            <b>Refer a friend</b> — earn 15 credits when someone signs up and rates 200 pairs.
+            <div class="refer-row"><input id="refer-link" readonly /><button class="outline" id="refer-copy">copy</button></div>
+          </div>
         </div>
       </section>
 

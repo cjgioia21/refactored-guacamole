@@ -223,17 +223,30 @@ $("#onboard-form").addEventListener("submit", async (e) => {
 // ================= Home =================
 async function loadHome() {
   const p = me.profile || {};
-  $("#manage-photos").innerHTML = `<h2>Manage photos</h2>
-    <div style="display:flex;gap:14px;align-items:center">
-      <div style="width:90px;flex:0 0 90px">${avatar(p)}</div>
-      <div><div class="meta">Shown in <b>${p.matchups || 0}</b> matchups so far.</div>
-      <button class="outline" style="margin-top:8px" data-view="onboard">Edit profile</button></div>
-    </div>`;
-  $("#manage-photos").querySelector("[data-view=onboard]").addEventListener("click", () => show("onboard"));
+  $("#acct-email").textContent = me.account?.email || "";
+  $("#photo-meta").textContent = `${p.matchups || 0} matchups →`;
+  $("#edit-profile").onclick = () => show("onboard");
+
+  // Two big face cards, filled with a real preview pair per gender.
+  const cards = await Promise.all(["woman", "man"].map(async (g) => {
+    const { status, body } = await api(`/api/matchup?gender=${g}`);
+    const label = g === "woman" ? "Women's faces" : "Men's faces";
+    const pair = status < 400 && body.a
+      ? `<span class="face-split">${avatar(body.a)}${avatar(body.b)}<span class="face-vs">VS</span></span>`
+      : `<span class="face-split"><span class="avatar"></span><span class="avatar"></span><span class="face-vs">VS</span></span>`;
+    const pairs = status < 400 ? (body.a.matchups || 0) + (body.b.matchups || 0) : 0;
+    return `<button class="face-card" data-rate="${g}">${pair}
+      <span class="face-foot"><span><b>${label}</b><small>${pairs} pairs so far</small></span><span class="go">Rate →</span></span>
+    </button>`;
+  }));
+  $("#face-cards").innerHTML = cards.join("");
+  $("#face-cards").querySelectorAll("[data-rate]").forEach((el) =>
+    el.addEventListener("click", () => { rateGender = el.dataset.rate; show("matchup"); loadMatchup(); }));
+
   const matches = (await api("/api/matches")).body || [];
   const badge = $("#match-badge");
   badge.textContent = matches.length; badge.hidden = matches.length === 0;
-  // referral link
+
   const link = `${location.origin}/?ref=${me.account?.id?.slice(0, 8) || ""}`;
   $("#refer-link").value = link;
   $("#refer-copy").onclick = () => { navigator.clipboard?.writeText(link); $("#refer-copy").textContent = "copied ✓"; };
@@ -267,11 +280,14 @@ async function loadBuy() {
 // ================= Game grid (with accuracy) =================
 async function renderGameGrid() {
   const stats = (await api("/api/guess-stats")).body || {};
-  const games = META.games || [];
-  $("#game-grid").innerHTML = games.map((g) => {
+  const reward = META.game?.reward ?? 2;
+  $("#game-grid").innerHTML = (META.games || []).map((g) => {
     const acc = stats[g.axis]?.accuracy;
-    return `<div class="game-cell" data-game="${g.key}"><div class="g-cat">GUESS</div><h4>${g.emoji || ""} ${esc(g.label)}</h4>
-      <span class="acc">${acc == null ? "—" : acc + "%"}</span> <span class="meta">accurate · play →</span></div>`;
+    return `<button class="round-tile" data-game="${g.key}">
+      <span class="ico">${g.emoji || "🎲"}</span>
+      <h4>${esc(g.label)}</h4>
+      <span class="tile-foot"><b>+${reward} credits</b><span>${acc == null ? "—" : acc + "% right"}</span></span>
+    </button>`;
   }).join("");
   $("#game-grid").querySelectorAll("[data-game]").forEach((el) => el.addEventListener("click", () => playGame(el.dataset.game)));
 }
@@ -284,9 +300,10 @@ async function loadMatchup() {
   const { status, body } = await api(`/api/matchup${rateGender ? "?gender=" + rateGender : ""}`);
   if (status >= 400) { $("#matchup").innerHTML = ""; $("#matchup-empty").hidden = false; return; }
   $("#matchup-empty").hidden = true;
-  $("#matchup").innerHTML = [body.a, body.b].map((u) => `<div class="vs-card">${avatar(u)}
-      <h3>${esc(u.name)}${u.age ? ", " + u.age : ""}</h3>
-      <button class="pick" data-win="${u.id}" data-lose="${u.id === body.a.id ? body.b.id : body.a.id}">choose</button></div>`).join("")
+  $("#matchup").innerHTML = [body.a, body.b].map((u, i) => `<button class="vs-card pick" type="button"
+      data-win="${u.id}" data-lose="${u.id === body.a.id ? body.b.id : body.a.id}">
+      <span class="vs-photo">${avatar(u)}<span class="vs-name">${esc(u.name)}${u.age ? ", " + u.age : ""}</span></span>
+      <span class="pick-hint">click, or <b>${i === 0 ? "←" : "→"}</b></span></button>`).join("")
     + `<span class="vs-badge">VS</span>`;
   $("#matchup").querySelectorAll(".pick").forEach((btn) => btn.addEventListener("click", async () => {
     const before = me.profile.votesCast || 0;
@@ -295,6 +312,9 @@ async function loadMatchup() {
     if (res?.votesCast != null) { me.profile.votesCast = res.votesCast; announceTasteUnlock(before, res.votesCast); }
     loadMatchup();
   }));
+  // ←/→ pick the left/right photo.
+  const picks = $("#matchup").querySelectorAll(".pick");
+  versusKeys = (side) => picks[side === "a" ? 0 : 1]?.click();
   renderRateExtras();
 }
 
@@ -563,9 +583,9 @@ async function playGame(gameKey) {
       const av = acc();
       wrap.innerHTML = `<p class="game-sub">For every ${cfg.need}/${cfg.rounds} correct, earn ${cfg.reward} credits.</p>
         <div class="versus">
-          <div class="vs-card" data-pick="a">${avatar(a)}<div class="pick-hint">click, or <b>←</b> arrow key</div></div>
+          <button class="vs-card" type="button" data-pick="a"><span class="vs-photo">${avatar(a)}<span class="vs-name">${esc(a.name)}</span></span><span class="pick-hint">click, or <b>←</b></span></button>
           <div class="acc-badge"><b>${av == null ? "—" : av + "%"}</b><span>ACCURACY</span><small>${base.total + sessionVotes} pairs</small></div>
-          <div class="vs-card" data-pick="b">${avatar(b)}<div class="pick-hint">click, or <b>→</b> arrow key</div></div>
+          <button class="vs-card" type="button" data-pick="b"><span class="vs-photo">${avatar(b)}<span class="vs-name">${esc(b.name)}</span></span><span class="pick-hint">click, or <b>→</b></span></button>
         </div>
         <div class="versus-foot">
           <span>${sessionVotes} this session · ${base.total + sessionVotes} all time</span>
