@@ -1,4 +1,5 @@
-// StudyMatch — attraction-based matchmaking server with accounts.
+// TrueHumanNature — attraction-based matchmaking server with accounts.
+import "./src/env.js"; // must be first: later imports read secrets at load time
 import express from "express";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
