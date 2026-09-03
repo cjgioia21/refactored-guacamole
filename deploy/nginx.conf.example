@@ -1,0 +1,21 @@
+# TrueHumanNature — nginx reverse proxy.
+# Copy to /etc/nginx/sites-available/thn, replace __DOMAIN__ with your domain,
+# symlink into sites-enabled, `nginx -t && systemctl reload nginx`, then run
+# certbot (it will rewrite this file to add the HTTPS/443 server + redirect).
+server {
+    listen 80;
+    listen [::]:80;
+    server_name __DOMAIN__ www.__DOMAIN__;
+
+    # Photo uploads are small data: URLs, but leave headroom.
+    client_max_body_size 2m;
+
+    location / {
+        proxy_pass http://127.0.0.1:3000;
+        proxy_http_version 1.1;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+    }
+}

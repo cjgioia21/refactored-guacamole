@@ -56,38 +56,65 @@ docker run -d -p 80:3000 \
 Runs on Fly.io, a VPS, Cloud Run, ECS, etc. `-v thn_data:/data` keeps data across
 restarts.
 
-## Option C — Your own VPS (full control)
+## Option C — Your own VPS + domain (full control) — the guided runbook
 
-On an Ubuntu box (DigitalOcean/Hetzner/EC2):
+Do these in order. Replace `yourdomain.com` and `<VPS IP>` throughout.
 
+### 1. Buy a domain
+Cloudflare Registrar / Porkbun / Namecheap (~$10/yr). Pick the name.
+
+### 2. Create a VPS
+DigitalOcean or Hetzner → Ubuntu 24.04 → the $5–6/mo size → add your SSH key.
+Note the public **IP**.
+
+### 3. Point DNS at the box
+At the registrar, add two **A** records:
+
+| Type | Name  | Value      |
+|------|-------|------------|
+| A    | `@`   | `<VPS IP>` |
+| A    | `www` | `<VPS IP>` |
+
+Wait until `dig +short yourdomain.com` returns your IP (minutes–hours).
+
+### 4. Install + start the app (the setup script does the heavy lifting)
 ```bash
-# 1. install Node 20
-curl -fsSL https://deb.nodesource.com/setup_20.x | sudo -E bash -
-sudo apt-get install -y nodejs
+ssh root@<VPS IP>
+git clone https://github.com/cjgioia21/refactored-guacamole thn && cd thn
+sudo bash deploy/setup.sh
+```
+`setup.sh` installs Node 20, git, nginx, certbot, and pm2; generates a stable
+`SESSION_SECRET` (stored at `/etc/thn.secret`); installs deps; and starts the app
+under **pm2** with `NODE_ENV=production DATA_DIR=/var/lib/thn`, set to relaunch on
+reboot. Verify: `pm2 status` shows **thn** online, and
+`curl -sf http://127.0.0.1:3000/auth/config` returns JSON.
 
-# 2. get the code + deps
-git clone <your repo> thn && cd thn
-npm ci
-
-# 3. run it under a process manager
-sudo npm i -g pm2
-NODE_ENV=production SESSION_SECRET="$(openssl rand -hex 32)" DATA_DIR=/var/lib/thn \
-  pm2 start server.js --name thn
-pm2 save && pm2 startup   # restart on reboot
+### 5. nginx reverse proxy
+```bash
+sudo cp deploy/nginx.conf.example /etc/nginx/sites-available/thn
+sudo sed -i 's/__DOMAIN__/yourdomain.com/g' /etc/nginx/sites-available/thn
+sudo ln -sf /etc/nginx/sites-available/thn /etc/nginx/sites-enabled/thn
+sudo rm -f /etc/nginx/sites-enabled/default
+sudo nginx -t && sudo systemctl reload nginx
 ```
 
-Put **nginx** in front for HTTPS (reverse proxy to `localhost:3000`) and get a
-free cert with certbot:
-
-```nginx
-server {
-  server_name yourdomain.com;
-  location / { proxy_pass http://localhost:3000; proxy_set_header Host $host;
-               proxy_set_header X-Forwarded-Proto $scheme; }
-}
-```
+### 6. Free HTTPS
 ```bash
-sudo certbot --nginx -d yourdomain.com
+sudo certbot --nginx -d yourdomain.com -d www.yourdomain.com
+```
+Certbot rewrites the nginx config to add the 443 server and an http→https
+redirect, and auto-renews.
+
+### 7. Open the firewall (if `ufw` is on)
+```bash
+sudo ufw allow OpenSSH && sudo ufw allow 'Nginx Full' && sudo ufw --force enable
+```
+
+Done — `https://yourdomain.com` is live.
+
+### Redeploying later
+```bash
+cd ~/thn && git pull && sudo bash deploy/setup.sh   # reloads pm2 with new code
 ```
 
 ---
