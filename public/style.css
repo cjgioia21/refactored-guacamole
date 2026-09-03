@@ -302,84 +302,96 @@ nav.tabs button.active { color: var(--accent); font-weight: bold; }
 }
 [hidden] { display: none !important; }
 
-/* ================= New home: poster layout ================= */
+
+/* ================= Home: "midnight" cover =================
+   Our own identity — dark canvas, gradient accents, photo-forward.
+   Inspired by poster-style rating apps, deliberately not a copy: no pale
+   panel, gradient VS pill instead of a red disc, glass tiles, pill badge. */
 :root {
-  --page-blue: #4a8fe0;
-  --panel-cyan: #dcf0f5;
-  --thn-red: #c8102e;
-  --tile-blue: #1a3fd0;
-  --display-navy: #14356e;
+  --ink-900: #0d1022;
+  --ink-800: #171b3a;
+  --ink-700: #222850;
+  --line-dk: rgba(255,255,255,.13);
+  --grad: linear-gradient(100deg, #7c5cff, #d94fd0 55%, #ff8a3d);
+  --amber: #ffb547;
 }
-/* Blue page + pale panel, only while the new home is showing. */
-body:has(#view-home.active) { background: var(--page-blue); }
-body:has(#view-home.active) header { background: transparent; border-bottom: 0; }
-body:has(#view-home.active) .brand { color: #fff; }
-body:has(#view-home.active) .brand b { color: #cfe0ff; }
-body:has(#view-home.active) .acct { color: rgba(255,255,255,.9); }
-body:has(#view-home.active) .signout { color: rgba(255,255,255,.85); }
+body:has(#view-home.active) {
+  background: radial-gradient(1000px 560px at 12% -12%, #33205e, transparent),
+              radial-gradient(800px 500px at 95% 5%, #172a5c, transparent), var(--ink-900);
+  color: #fff;
+}
 body:has(#view-home.active) .topbar, body:has(#view-home.active) .banner { display: none; }
+body:has(#view-home.active) header { background: transparent; border-bottom: 1px solid var(--line-dk); }
+body:has(#view-home.active) .brand { color: #fff; }
+body:has(#view-home.active) .brand b { background: var(--grad); -webkit-background-clip: text; background-clip: text; color: transparent; }
+body:has(#view-home.active) .acct, body:has(#view-home.active) .signout { color: rgba(255,255,255,.62); }
 
-.acct { font-size: 14px; }
-.credits-badge { display: inline-flex; flex-direction: column; align-items: center; justify-content: center;
-  width: 56px; height: 56px; border-radius: 50%; background: var(--thn-red); color: #fff; line-height: 1; }
-.credits-badge b { font-size: 20px; font-weight: 800; }
-.credits-badge span { font-size: 8px; letter-spacing: 1px; margin-top: 2px; }
+.acct { font-size: 13px; }
+/* Credits as a gradient pill, not a disc. */
+.credits-badge { display: inline-flex; align-items: baseline; gap: 6px; background: var(--grad);
+  color: #17102b; border-radius: 999px; padding: 7px 14px; font-weight: 800; }
+.credits-badge b { font-size: 17px; }
+.credits-badge span { font-size: 10px; letter-spacing: 1.5px; text-transform: uppercase; opacity: .8; }
 
-.display-title { color: var(--display-navy); font-size: clamp(38px, 7vw, 68px); line-height: 1; margin: 10px 0 -18px 6px;
-  font-weight: 400; position: relative; z-index: 2; }
-.display-title b { font-weight: 800; }
-.panel { background: var(--panel-cyan); border-radius: 18px; padding: 34px 22px 26px; }
-.panel-label { text-transform: uppercase; letter-spacing: 2px; font-size: 11px; font-weight: 700;
-  color: #5c7a95; margin: 22px 2px 10px; }
+/* Headline: tight, all-caps, one gradient word. */
+.display-title { font-size: clamp(34px, 6.5vw, 60px); line-height: .96; letter-spacing: -.03em;
+  text-transform: uppercase; font-weight: 800; color: #fff; margin: 26px 2px 6px; }
+.display-title b { background: var(--grad); -webkit-background-clip: text; background-clip: text; color: transparent; }
+.panel { background: transparent; padding: 0 0 30px; }   /* no pale panel — content sits on the canvas */
+.panel-label { text-transform: uppercase; letter-spacing: 2.4px; font-size: 11px; font-weight: 700;
+  color: rgba(255,255,255,.45); margin: 30px 2px 12px; display: flex; align-items: center; gap: 10px; }
+.panel-label::after { content: ""; flex: 1; height: 1px; background: var(--line-dk); }
 
-/* Two big red face cards */
-.face-cards { display: grid; grid-template-columns: 1fr 1fr; gap: 18px; }
-.face-card { background: var(--thn-red); border: 0; border-radius: 10px; overflow: hidden; cursor: pointer;
-  padding: 0; text-align: left; font: inherit; transition: transform .12s, box-shadow .12s; }
-.face-card:hover { transform: translateY(-3px); box-shadow: 0 12px 28px rgba(0,0,0,.28); }
-.face-split { position: relative; display: grid; grid-template-columns: 1fr 1fr; }
+/* Face cards: dark card, seamed photos, gradient VS pill, caption row. */
+.face-cards { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+.face-card { background: var(--ink-800); border: 1px solid var(--line-dk); border-radius: 18px; overflow: hidden;
+  cursor: pointer; padding: 0; text-align: left; font: inherit; color: #fff;
+  transition: transform .14s, box-shadow .14s, border-color .14s; }
+.face-card:hover { transform: translateY(-4px); border-color: rgba(217,79,208,.55); box-shadow: 0 16px 40px rgba(124,92,255,.28); }
+.face-split { position: relative; display: grid; grid-template-columns: 1fr 1fr; gap: 3px; }
 .face-split img, .face-split .avatar { width: 100%; aspect-ratio: 1/1; object-fit: cover; display: block; }
-.face-vs { position: absolute; left: 50%; top: 50%; transform: translate(-50%,-50%); width: 44px; height: 44px;
-  border-radius: 50%; background: var(--thn-red); color: #fff; display: flex; align-items: center; justify-content: center;
-  font-weight: 800; font-size: 15px; box-shadow: 0 2px 10px rgba(0,0,0,.35); }
-.face-foot { display: flex; align-items: center; justify-content: space-between; padding: 12px 14px; color: #fff; }
-.face-foot b { display: block; font-size: 19px; }
-.face-foot small { opacity: .85; font-size: 13px; }
-.face-foot .go { font-weight: 700; font-size: 15px; }
+.face-vs { position: absolute; left: 50%; top: 50%; transform: translate(-50%,-50%); background: var(--grad);
+  color: #17102b; font-weight: 800; font-size: 12px; letter-spacing: 1px; padding: 6px 12px; border-radius: 999px;
+  box-shadow: 0 4px 16px rgba(0,0,0,.45); }
+.face-foot { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 14px 16px; }
+.face-foot b { display: block; font-size: 18px; }
+.face-foot small { color: rgba(255,255,255,.5); font-size: 12px; }
+.face-foot .go { background: rgba(255,255,255,.1); border: 1px solid var(--line-dk); border-radius: 999px;
+  padding: 7px 13px; font-size: 13px; font-weight: 700; white-space: nowrap; }
+.face-card:hover .go { background: var(--grad); color: #17102b; border-color: transparent; }
 
-/* Blue guessing-round tiles */
+/* Guessing rounds: glass tiles with a gradient icon chip. */
 .round-tiles { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 12px; }
-.round-tile { background: var(--tile-blue); color: #fff; border: 0; border-radius: 8px; padding: 14px; cursor: pointer;
-  text-align: left; font: inherit; transition: transform .12s, filter .12s; }
-.round-tile:hover { transform: translateY(-2px); filter: brightness(1.12); }
-.round-tile .ico { width: 40px; height: 40px; border-radius: 50%; background: rgba(255,255,255,.16);
-  display: flex; align-items: center; justify-content: center; font-size: 21px; margin-bottom: 10px; }
-.round-tile h4 { margin: 0 0 6px; font-size: 17px; color: #fff; border-bottom: 1px solid rgba(255,255,255,.35); padding-bottom: 8px; }
-.round-tile .tile-foot { display: flex; justify-content: space-between; gap: 8px; font-size: 13px; }
-.round-tile .tile-foot b { font-weight: 700; }
+.round-tile { background: rgba(255,255,255,.05); border: 1px solid var(--line-dk); border-radius: 16px; padding: 15px;
+  cursor: pointer; text-align: left; font: inherit; color: #fff; transition: transform .14s, background .14s, border-color .14s; }
+.round-tile:hover { transform: translateY(-3px); background: rgba(255,255,255,.09); border-color: rgba(124,92,255,.6); }
+.round-tile .ico { width: 38px; height: 38px; border-radius: 12px; background: var(--grad); display: flex;
+  align-items: center; justify-content: center; font-size: 19px; margin-bottom: 12px; }
+.round-tile h4 { margin: 0 0 10px; font-size: 16px; color: #fff; }
+.round-tile .tile-foot { display: flex; justify-content: space-between; gap: 8px; font-size: 12px; color: rgba(255,255,255,.55); }
+.round-tile .tile-foot b { color: var(--amber); font-weight: 700; }
 
 /* Secondary tiles + refer */
 .mini-tiles { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 12px; }
-.mini-tile { background: #fff; border: 1px solid #c3dbe4; border-radius: 8px; padding: 14px; text-align: left;
-  cursor: pointer; font: inherit; color: var(--ink); }
-.mini-tile:hover { border-color: var(--tile-blue); }
-.mini-tile b { display: block; font-size: 16px; margin-bottom: 4px; }
-.mini-tile span { color: var(--muted); font-size: 13px; }
-.refer { margin-top: 22px; font-size: 14px; color: #33566b; }
+.mini-tile { background: transparent; border: 1px solid var(--line-dk); border-radius: 16px; padding: 15px;
+  text-align: left; cursor: pointer; font: inherit; color: #fff; transition: border-color .14s, background .14s; }
+.mini-tile:hover { border-color: rgba(255,255,255,.4); background: rgba(255,255,255,.05); }
+.mini-tile b { display: block; font-size: 15px; margin-bottom: 4px; }
+.mini-tile span { color: rgba(255,255,255,.5); font-size: 12px; }
+.refer { margin-top: 26px; font-size: 13px; color: rgba(255,255,255,.55); }
+.refer b { color: #fff; }
+.refer-row input { background: rgba(255,255,255,.06); border-color: var(--line-dk); color: rgba(255,255,255,.75); }
+body:has(#view-home.active) .badge { background: var(--grad); color: #17102b; font-weight: 700; }
+body:has(#view-home.active) nav.tabs { background: rgba(13,16,34,.86); border-top: 1px solid var(--line-dk); }
+body:has(#view-home.active) nav.tabs button { color: rgba(255,255,255,.55); }
+body:has(#view-home.active) nav.tabs button.active { color: #fff; }
 
+@media (max-width: 700px) { .acct { display: none; } }
 @media (min-width: 900px) {
-  #view-home.active { display: block; }   /* panel layout, not the old 2-col grid */
-  .panel { padding: 44px 34px 32px; }
+  #view-home.active { display: block; }
   .round-tiles { grid-template-columns: repeat(5, 1fr); }
   .mini-tiles { grid-template-columns: repeat(4, 1fr); }
 }
-
-/* Home polish: keep the header uncluttered on phones, and never let the fixed
-   nav dock sit on top of the last row of content. */
-@media (max-width: 700px) {
-  .acct { display: none; }
-  .credits-badge { width: 48px; height: 48px; }
-  .credits-badge b { font-size: 17px; }
-}
 #app { padding-bottom: 96px; }
-.panel { padding-bottom: 34px; }
+.display-title { margin-bottom: 26px; }
+#app { padding-bottom: 130px; }
