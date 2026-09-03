@@ -17,9 +17,9 @@ const LEGAL_DIR = join(dirname(fileURLToPath(import.meta.url)), "..", "legal");
 // Bump a version when the substance changes — that forces re-acceptance.
 // Keep these in step with the "Version" line inside each document.
 export const DOCS = {
-  terms: { file: "terms.md", version: "1.0", title: "Terms of Service" },
+  // 1.1 added the Top 10 clause (§6) — a version bump forces re-acceptance.
+  terms: { file: "terms.md", version: "1.1", title: "Terms of Service" },
   privacy: { file: "privacy.md", version: "1.0", title: "Privacy Policy" },
-  board: { file: "board-terms.md", version: "1.0", title: "Leaderboard Terms" },
 };
 
 // Placeholders filled from env so the same documents work for any deployment.

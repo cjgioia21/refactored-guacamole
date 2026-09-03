@@ -26,7 +26,9 @@ won't work). Any of the paths below works.
   | `LEGAL_ENTITY` / `LEGAL_PROVINCE` / `LEGAL_CONTACT` / `LEGAL_EFFECTIVE_DATE` | **before launch** | filled into the Terms, Privacy Policy and Leaderboard Terms. Leave them unset and the documents ship with placeholder text naming no real entity. |
   | `BLOCKED_COUNTRIES` | optional | ISO codes, comma-separated. Defaults to the EU/EEA + UK. |
   | `BLOCKED_US_STATES` | optional | defaults to `IL` (Illinois BIPA). |
-  | `BOARDS_ENABLED` | optional | set to `0` to switch the public leaderboards off entirely. |
+  | `BOARDS_ENABLED` | optional | set to `0` to switch the Top 10 off entirely. |
+  | `ID_PROVIDER` | optional | `manual` enables the request-ID escalation in the review queue (recommended). `none` disables ID collection altogether. |
+  | `REQUIRE_ID_VERIFICATION` | optional | `1` demands ID from **everyone** before their photo goes live. Off by default — the escalation model asks only the people a reviewer is unsure about, which is both cheaper and far less data to hold. |
   | `GOOGLE_CLIENT_ID` / `GOOGLE_CLIENT_SECRET` / `OAUTH_REDIRECT` | optional | enables the "Sign in with Google" button; email/password works without them |
 
 > Persistence note: JSON files are fine for launch/small scale. Photos are
@@ -49,7 +51,9 @@ Have a lawyer read them before you take a single payment or a single photo.
    every user to re-accept at their next request. An agreement you cannot prove
    someone accepted is close to unenforceable; this is the part most sites skip.
 3. **Set `ADMIN_EMAILS`.** Nothing is published until a human approves it, so
-   without an admin the site has no working photo pipeline at all.
+   without an admin the site has no working photo pipeline at all. Set
+   `ID_PROVIDER=manual` too, so the **Request ID** button is available when a
+   face looks too young to approve on sight.
 4. **Confirm your payment processor will take this business, in writing, before
    you build billing on it.** Stripe and PayPal both prohibit certain sexual
    content, and being cut off after launch with customer balances outstanding is

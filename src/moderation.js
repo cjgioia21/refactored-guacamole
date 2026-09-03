@@ -19,13 +19,16 @@ function baseRules(profile = {}) {
   if (Number.isFinite(age) && age > 0 && age < MIN_AGE) {
     return { autoReject: true, reason: `declared age ${age} is under ${MIN_AGE}`, flags: ["underage-declared"] };
   }
-  if (profile.confirmedAdult === false) {
+  // The photo-submission confirmations only bind someone who is submitting a
+  // photo. Voters never upload one and are never rated, so holding them to a
+  // confirmation they were never shown would just lock them out of the site.
+  if (profile.photo && profile.confirmedAdult === false) {
     return { autoReject: true, reason: "did not confirm being 18 or older", flags: ["no-adult-confirmation"] };
   }
 
+  if (!profile.photo) return { autoReject: false, reason: null, flags: ["voter"] };
   if (!Number.isFinite(age) || !age) flags.push("no-age-given");
   else if (age < 21) flags.push("young-check-age");
-  if (!profile.photo) flags.push("no-photo");
   return { autoReject: false, reason: null, flags };
 }
 

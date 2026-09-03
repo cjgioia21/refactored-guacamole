@@ -5,7 +5,7 @@ import { rmSync } from "node:fs";
 process.env.NODE_ENV = "test";
 process.env.ADMIN_EMAILS = "admin@ex.com";
 const dataDir = new URL("../data/", import.meta.url);
-const files = ["accounts.json", ".secret", ".photokey", ".photosecret", "users.json", "moral-tally.json"].map((f) => new URL(f, dataDir));
+const files = ["accounts.json", ".secret", ".photokey", ".photosecret", "users.json", "moral-tally.json", "reports.json"].map((f) => new URL(f, dataDir));
 const clean = () => {
   for (const f of files) { try { rmSync(f); } catch {} }
   try { rmSync(new URL("photos/", dataDir), { recursive: true }); } catch {}
@@ -88,49 +88,6 @@ test("unauthenticated vote is rejected with 401", async () => {
   const c = client();
   const r = await c("POST", "/api/vote", { winnerId: "x", loserId: "y" });
   assert.equal(r.status, 401);
-});
-
-test("full flow: signup -> profile -> mutual match reveals socials, no chat routes", async () => {
-  const a = client();
-  const b = client();
-  await a("POST", "/auth/signup", { email: "a@ex.com", password: "hunter2" });
-  await b("POST", "/auth/signup", { email: "b@ex.com", password: "hunter2" });
-
-  const pa = (await a("POST", "/api/profile", { name: "Alex", gender: "man", orientation: "straight", socials: { instagram: "alex_ig" }, answers: {}, moralAnswers: moralAll(0) })).body;
-  const pb = (await b("POST", "/api/profile", { name: "Bella", gender: "woman", orientation: "straight", socials: { instagram: "bella_ig" }, answers: {}, moralAnswers: moralAll(0) })).body;
-
-  // a third profile to lose the matchups
-  const c = client();
-  await c("POST", "/auth/signup", { email: "c@ex.com", password: "hunter2" });
-  const pc = (await c("POST", "/api/profile", { name: "Cara", gender: "woman", answers: {} })).body;
-
-  // Photos start pending and are invisible until an admin approves them.
-  assert.equal(pa.photoStatus, "pending");
-  await approve(pa.id, pb.id, pc.id);
-
-  // /api/me reflects the session profile
-  const meA = (await a("GET", "/api/me")).body;
-  assert.equal(meA.profile.id, pa.id);
-
-  // a rates b over c three times; not mutual yet
-  for (let i = 0; i < 3; i++) await a("POST", "/api/vote", { winnerId: pb.id, loserId: pc.id });
-  assert.equal((await a("GET", "/api/matches")).body.length, 0);
-
-  // b rates a over c twice -> still short of the 3-pick gate
-  for (let i = 0; i < 2; i++) await b("POST", "/api/vote", { winnerId: pa.id, loserId: pc.id });
-  assert.equal((await a("GET", "/api/matches")).body.length, 0);
-
-  // the third pick clears the gate -> mutual match
-  await b("POST", "/api/vote", { winnerId: pa.id, loserId: pc.id });
-  const matches = (await a("GET", "/api/matches")).body;
-  assert.equal(matches.length, 1);
-  assert.equal(matches[0].user.id, pb.id);
-  assert.equal(matches[0].user.socials.instagram, "bella_ig"); // socials revealed to a match
-  assert.ok(matches[0].yourPicks >= 3 && matches[0].theirPicks >= 3);
-
-  // messaging endpoints no longer exist
-  const gone = await a("POST", `/api/users/${pa.id}/messages/${pb.id}`, { text: "hi" });
-  assert.equal(gone.status, 404);
 });
 
 test("credit economy: reveal costs credits and gates on data", async () => {
@@ -319,25 +276,6 @@ test("admin routes require an admin account", async () => {
   assert.equal((await client()("GET", "/api/admin/queue")).status, 401);
 });
 
-test("a Human Nature gap over the window blocks a match", async () => {
-  const a = client(), b = client(), c = client();
-  await a("POST", "/auth/signup", { email: "nat-a@ex.com", password: "hunter2" });
-  await b("POST", "/auth/signup", { email: "nat-b@ex.com", password: "hunter2" });
-  await c("POST", "/auth/signup", { email: "nat-c@ex.com", password: "hunter2" });
-  // Opposite ends of the morality quiz -> the widest possible nature gap.
-  const pa = (await a("POST", "/api/profile", { name: "Na", gender: "man", moralAnswers: moralAll(2) })).body;
-  const pb = (await b("POST", "/api/profile", { name: "Nb", gender: "woman", moralAnswers: moralAll(-2) })).body;
-  const pc = (await c("POST", "/api/profile", { name: "Nc", gender: "woman", moralAnswers: moralAll(0) })).body;
-  await approve(pa.id, pb.id, pc.id);
-  assert.ok(Math.abs(pa.natureScore - pb.natureScore) > 25);
-
-  for (let i = 0; i < 3; i++) await a("POST", "/api/vote", { winnerId: pb.id, loserId: pc.id });
-  for (let i = 0; i < 3; i++) await b("POST", "/api/vote", { winnerId: pa.id, loserId: pc.id });
-  assert.equal((await a("GET", "/api/matches")).body.length, 0); // picks met, nature gap blocks
-  const rep = (await a("GET", "/api/report")).body;
-  assert.ok(rep.almost.some((m) => m.id === pb.id && m.blockedBy === "nature"));
-});
-
 test("the morality quiz scores, gates matches, and reports what everyone else said", async () => {
   const a = client();
   await a("POST", "/auth/signup", { email: "moral@ex.com", password: "hunter2" });
@@ -379,33 +317,6 @@ test("the report carries the verdict, the vice breakdown and the worst vice", as
   assert.equal(rep.nature.answered, 36);
   assert.equal(Object.keys(rep.nature.breakdown).length, 6);
   assert.ok(rep.nature.worst.label);
-});
-
-test("skipping the quiz blocks a match even with mutual picks", async () => {
-  const a = client(), b = client(), c = client();
-  await a("POST", "/auth/signup", { email: "sq-a@ex.com", password: "hunter2" });
-  await b("POST", "/auth/signup", { email: "sq-b@ex.com", password: "hunter2" });
-  await c("POST", "/auth/signup", { email: "sq-c@ex.com", password: "hunter2" });
-  const pa = (await a("POST", "/api/profile", { name: "Sa", gender: "man" })).body;
-  const pb = (await b("POST", "/api/profile", { name: "Sb", gender: "woman" })).body;
-  const pc = (await c("POST", "/api/profile", { name: "Sc", gender: "woman" })).body;
-  await approve(pa.id, pb.id, pc.id);
-
-  for (let i = 0; i < 3; i++) await a("POST", "/api/vote", { winnerId: pb.id, loserId: pc.id });
-  for (let i = 0; i < 3; i++) await b("POST", "/api/vote", { winnerId: pa.id, loserId: pc.id });
-  assert.equal((await a("GET", "/api/matches")).body.length, 0);
-  const rep = (await a("GET", "/api/report")).body;
-  assert.ok(rep.almost.some((m) => m.id === pb.id && m.blockedBy === "your-quiz"));
-
-  // Both finish the quiz identically -> gap 0, and the match lands.
-  const qs = (await a("GET", "/api/moral-questions")).body.questions;
-  const same = Object.fromEntries(qs.map((q) => [q.id, q.options.findIndex((o) => o.value === 0)]));
-  await a("POST", "/api/profile", { moralAnswers: same });
-  await b("POST", "/api/profile", { moralAnswers: same });
-  await approve(pa.id, pb.id); // re-approve: editing the profile re-queues the photo
-  const matches = (await a("GET", "/api/matches")).body;
-  assert.equal(matches.length, 1);
-  assert.equal(matches[0].natureGap, 0);
 });
 
 test("the morality guessing round compares Human Nature scores", async () => {
@@ -535,32 +446,6 @@ test("the API never leaks a name into the rating pool", async () => {
   assert.equal(one.name, undefined);
 });
 
-test("a name reaches a match only when shared, and can be withdrawn", async () => {
-  const a = client(), b = client(), c = client();
-  for (const [cl, em] of [[a, "sn-a"], [b, "sn-b"], [c, "sn-c"]]) {
-    await cl("POST", "/auth/signup", { email: `${em}@ex.com`, password: "hunter2" });
-  }
-  const same = moralAll(0);
-  const pa = (await a("POST", "/api/profile", { name: "Ann", gender: "man", shareName: true, moralAnswers: same, socials: { instagram: "ann" } })).body;
-  const pb = (await b("POST", "/api/profile", { name: "Bee", gender: "woman", shareName: false, moralAnswers: same, socials: { instagram: "bee" } })).body;
-  const pc = (await c("POST", "/api/profile", { name: "Cee", gender: "woman", moralAnswers: same })).body;
-  await approve(pa.id, pb.id, pc.id);
-
-  for (let i = 0; i < 3; i++) await a("POST", "/api/vote", { winnerId: pb.id, loserId: pc.id });
-  for (let i = 0; i < 3; i++) await b("POST", "/api/vote", { winnerId: pa.id, loserId: pc.id });
-
-  // B didn't share -> A sees no name but does see socials.
-  const aSees = (await a("GET", "/api/matches")).body;
-  assert.equal(aSees.length, 1);
-  assert.equal(aSees[0].user.name, null);
-  assert.equal(aSees[0].user.socials.instagram, "bee");
-  // A did share -> B sees it.
-  assert.equal((await b("GET", "/api/matches")).body[0].user.name, "Ann");
-  // A turns it off -> gone immediately.
-  await a("POST", "/api/profile", { shareName: false });
-  assert.equal((await b("GET", "/api/matches")).body[0].user.name, null);
-});
-
 test("the report carries rank, win rate and the rejection count", async () => {
   const a = client(), b = client(), c = client();
   for (const [cl, em] of [[a, "st-a"], [b, "st-b"], [c, "st-c"]]) {
@@ -610,30 +495,6 @@ test("dilemma rounds tally onto the target and count toward credits", async () =
 
   assert.equal((await a("POST", "/api/dilemma", { kind: "nope", aId: px.id, pick: "yes" })).status, 400);
   assert.equal((await a("POST", "/api/dilemma", { kind: "cheat", aId: px.id, pick: "maybe" })).status, 400);
-});
-
-test("boards are opt-in, require the agreement, and drop you instantly on opt-out", async () => {
-  const a = client();
-  await a("POST", "/auth/signup", { email: "bd-a@ex.com", password: "hunter2" });
-  const pa = (await a("POST", "/api/profile", { name: "Bo", gender: "man", photo: await photoData(180) })).body;
-  await approve(pa.id);
-
-  const before = (await a("GET", "/api/leaderboard")).body;
-  assert.equal(before.me.optedIn, false);
-  assert.equal(before.me.eligible, false);
-
-  // Joining without accepting the current agreement version is refused.
-  assert.equal((await a("POST", "/api/board-optin", { on: true })).status, 400);
-  assert.equal((await a("POST", "/api/board-optin", { on: true, agreementVersion: "0.0" })).status, 400);
-
-  const joined = await a("POST", "/api/board-optin", { on: true, agreementVersion: before.me.agreementVersion });
-  assert.equal(joined.status, 200);
-  assert.equal((await a("GET", "/api/leaderboard")).body.me.optedIn, true);
-  // Opted in but under the matchup floor -> still not on the board itself.
-  assert.equal((await a("GET", "/api/leaderboard")).body.me.eligible, false);
-
-  await a("POST", "/api/board-optin", { on: false });
-  assert.equal((await a("GET", "/api/leaderboard")).body.me.optedIn, false);
 });
 
 test("legal documents are public, and acceptance is recorded per version", async () => {
@@ -689,4 +550,229 @@ test("regional restrictions refuse blocked countries and Illinois", async () => 
     body: JSON.stringify({ email: "newyork@ex.com", password: "hunter2", state: "NY" }),
   });
   assert.equal(ny.status, 201);
+});
+
+test("reporting a photo works without an account and hides urgent cases at once", async () => {
+  const owner = client();
+  await owner("POST", "/auth/signup", { email: "rep-owner@ex.com", password: "hunter2" });
+  const p = (await owner("POST", "/api/profile", { name: "Rep", gender: "man", photo: await photoData(190) })).body;
+  await approve(p.id);
+  assert.ok((await owner("GET", "/api/users")).body.some((u) => u.id === p.id));
+
+  const reasons = (await client()("GET", "/api/report-reasons")).body.reasons;
+  assert.ok(reasons.some((r) => r.key === "minor" && r.urgent && r.response));
+  assert.ok(reasons.some((r) => r.key === "not_them" && r.urgent));
+
+  // A signed-out visitor can report — the Terms say you shouldn't need an
+  // account to report your own face, so the API must allow it.
+  const anon = client();
+  const filed = await anon("POST", "/api/report", { targetId: p.id, reason: "minor", detail: "looks about 15" });
+  assert.equal(filed.status, 201);
+  assert.equal(filed.body.urgent, true);
+  assert.equal(filed.body.hidden, true);
+
+  // The photo is out of circulation before any human has looked at it.
+  const me = (await owner("GET", "/api/me")).body;
+  assert.equal(me.profile.photoStatus, "pending");
+  assert.ok(!(await owner("GET", "/api/users")).body.some((u) => u.id === p.id));
+
+  assert.equal((await anon("POST", "/api/report", { targetId: p.id, reason: "nonsense" })).status, 400);
+});
+
+test("a non-urgent report is queued but does not take the photo down", async () => {
+  const owner = client();
+  await owner("POST", "/auth/signup", { email: "rep2@ex.com", password: "hunter2" });
+  const p = (await owner("POST", "/api/profile", { name: "Rep2", gender: "man", photo: await photoData(200) })).body;
+  await approve(p.id);
+  const r = await client()("POST", "/api/report", { targetId: p.id, reason: "other", detail: "just odd" });
+  assert.equal(r.status, 201);
+  assert.equal(r.body.urgent, false);
+  assert.equal(r.body.hidden, false);
+  assert.equal((await owner("GET", "/api/me")).body.profile.photoStatus, "approved");
+});
+
+test("the admin report queue puts urgent reports first and tracks the response window", async () => {
+  const admin = await adminClient();
+  const q = (await admin("GET", "/api/admin/reports")).body;
+  assert.ok(q.open.length >= 2);
+  assert.equal(q.open[0].urgent, true); // urgent sorts ahead of the rest
+  assert.equal(typeof q.oldestOpenHours, "number");
+
+  const first = q.open[0];
+  const done = await admin("POST", `/api/admin/reports/${first.id}`, { status: "actioned", resolution: "photo removed" });
+  assert.equal(done.status, 200);
+  assert.equal(done.body.status, "actioned");
+  assert.ok(done.body.resolvedAt);
+  assert.equal((await admin("GET", "/api/admin/reports")).body.open.some((r) => r.id === first.id), false);
+
+  assert.equal((await admin("POST", `/api/admin/reports/${first.id}`, { status: "nonsense" })).status, 400);
+  // Reports are admin-only.
+  assert.equal((await client()("GET", "/api/admin/reports")).status, 401);
+});
+
+test("verification state is reported, and an admin can verify by hand", async () => {
+  const a = client();
+  await a("POST", "/auth/signup", { email: "ver@ex.com", password: "hunter2" });
+  const p = (await a("POST", "/api/profile", { name: "Ver", gender: "man", photo: await photoData(210) })).body;
+
+  const before = (await a("GET", "/api/verify")).body;
+  assert.equal(before.verified, false);
+  // No provider configured in tests, so starting a flow fails honestly rather
+  // than pretending to verify anyone.
+  assert.equal((await a("POST", "/api/verify/start", {})).status, 503);
+
+  const admin = await adminClient();
+  const marked = await admin("POST", `/api/admin/verify/${p.id}`, { verified: true });
+  assert.equal(marked.status, 200);
+  assert.equal(marked.body.verified, true);
+  assert.equal(marked.body.verificationMethod, "manual");
+  assert.equal((await a("GET", "/api/verify")).body.verified, true);
+  assert.equal((await a("GET", "/api/me")).body.profile.verified, true);
+
+  await admin("POST", `/api/admin/verify/${p.id}`, { verified: false });
+  assert.equal((await a("GET", "/api/verify")).body.verified, false);
+});
+
+test("a voter can sign up and vote with no photo, and is never rated", async () => {
+  // Two participants to be rated, and one voter who has no photo at all.
+  const p1 = client(), p2 = client(), voter = client();
+  for (const [cl, em] of [[p1, "vp-1"], [p2, "vp-2"], [voter, "vp-voter"]]) {
+    await cl("POST", "/auth/signup", { email: `${em}@ex.com`, password: "hunter2" });
+  }
+  const a = (await p1("POST", "/api/profile", { name: "P1", gender: "woman", photo: await photoData(220) })).body;
+  const b = (await p2("POST", "/api/profile", { name: "P2", gender: "woman", photo: await photoData(230) })).body;
+  await approve(a.id, b.id);
+
+  // The voter's profile carries no photo and needs no review.
+  const v = (await voter("POST", "/api/profile", { name: "Vee", gender: "man" })).body;
+  assert.equal(v.hasPhoto, false);
+  assert.equal(v.isParticipant, false);
+
+  // They can still vote, which is the whole point of making them sign in.
+  const pair = await voter("GET", "/api/matchup?gender=woman");
+  assert.equal(pair.status, 200);
+  const vote = await voter("POST", "/api/vote", { winnerId: a.id, loserId: b.id });
+  assert.equal(vote.status, 200);
+  assert.equal(vote.body.votesCast, 1);
+
+  // And they are never in anyone's matchup pool themselves.
+  assert.equal((await p1("GET", "/api/users")).body.some((u) => u.id === v.id), false);
+});
+
+test("the Top 10 ranks by win rate per gender, with no opt-in anywhere", async () => {
+  // Any signed-in profile can read the board — this one is a plain voter.
+  const c = client();
+  await c("POST", "/auth/signup", { email: "board-reader@ex.com", password: "hunter2" });
+  await c("POST", "/api/profile", { name: "Reader", gender: "man" });
+  const board = (await c("GET", "/api/leaderboard")).body;
+  assert.ok(Array.isArray(board.boards));
+  assert.equal(board.minMatchups, 50);
+  // Nothing in the payload offers a way in or out.
+  const flat = JSON.stringify(board);
+  for (const gone of ["optedIn", "agreementVersion", "bottom", "eligible"]) {
+    assert.equal(flat.includes(gone), false, `leaderboard should not mention ${gone}`);
+  }
+  assert.equal((await c("POST", "/api/board-optin", { on: true })).status, 404);
+});
+
+test("a ranked participant sees their own standing with a rank and a percentile", async () => {
+  const a = client();
+  await a("POST", "/auth/signup", { email: "stand@ex.com", password: "hunter2" });
+  const p = (await a("POST", "/api/profile", { name: "St", gender: "man", photo: await photoData(240) })).body;
+  await approve(p.id);
+
+  const before = (await a("GET", "/api/leaderboard")).body;
+  assert.equal(before.isParticipant, true);
+  assert.equal(before.you.ranked, false); // no matchups yet
+  assert.equal(before.you.toGo, 50);
+
+  // The report carries the same standing, so home can show it without a second call.
+  assert.ok((await a("GET", "/api/report")).body.standing);
+});
+
+test("the report exposes the four mirrors and nothing about matching", async () => {
+  const a = client();
+  await a("POST", "/auth/signup", { email: "mirror@ex.com", password: "hunter2" });
+  await a("POST", "/api/profile", { name: "Mi", gender: "woman", photo: await photoData(250) });
+  const r = (await a("GET", "/api/report")).body;
+
+  assert.ok(r.compatibilityGap, "compatibility gap");
+  assert.ok(Array.isArray(r.selfVsCrowd) && r.selfVsCrowd.length > 0, "self vs crowd");
+  assert.ok(r.reciprocity, "reciprocity");
+  assert.ok(r.moralityVsLooks && Array.isArray(r.moralityVsLooks.points), "scatter");
+  for (const gone of ["matches", "crushes", "almost", "suggestions"]) {
+    assert.equal(r[gone], undefined, `report should not carry ${gone}`);
+  }
+  // The dating endpoints are gone from the server entirely.
+  assert.equal((await a("GET", "/api/matches")).status, 404);
+});
+
+test("socials are attachable, shown on the Top 10, and never in the rating pool", async () => {
+  const a = client(), b = client();
+  await a("POST", "/auth/signup", { email: "soc-a@ex.com", password: "hunter2" });
+  await b("POST", "/auth/signup", { email: "soc-b@ex.com", password: "hunter2" });
+  const pa = (await a("POST", "/api/profile", {
+    name: "Soc", gender: "woman", photo: await photoData(260),
+    socials: { instagram: "soc_handle", tiktok: "soc_tok" },
+  })).body;
+  await approve(pa.id);
+
+  // Rating someone must never reveal a handle — it would change the vote.
+  const users = (await b("GET", "/api/users")).body;
+  assert.equal(JSON.stringify(users).includes("soc_handle"), false);
+  const one = (await b("GET", `/api/users/${pa.id}`)).body;
+  assert.equal(one.socials, undefined);
+});
+
+test("a reviewer can request ID, which blocks approval until it arrives", async () => {
+  const a = client();
+  const admin = await adminClient();
+  await a("POST", "/auth/signup", { email: "idreq@ex.com", password: "hunter2" });
+  const p = (await a("POST", "/api/profile", { name: "Young", gender: "man", photo: await photoData(270) })).body;
+
+  const asked = await admin("POST", `/api/admin/photo/${p.id}`, { action: "request-id" });
+  assert.equal(asked.status, 200);
+  assert.equal(asked.body.idRequested, true);
+  assert.equal(asked.body.photoStatus, "pending");
+
+  // The person is told, and the upload card is unlocked for them.
+  assert.equal((await a("GET", "/api/verify")).body.idRequested, true);
+  assert.equal((await a("GET", "/api/me")).body.profile.idRequested, true);
+
+  // Approving before the ID arrives is refused rather than silently undoing it.
+  const early = await admin("POST", `/api/admin/photo/${p.id}`, { action: "approve" });
+  assert.equal(early.status, 409);
+  assert.match(early.body.error || early.body.profile?.moderation?.reason || "", /waiting on their ID|age check/);
+
+  // They send it; the admin can see it and nobody else can.
+  await a("POST", "/api/profile", { idDocument: await photoData(280) });
+  assert.equal((await admin("GET", "/api/admin/queue")).body.pending.find((u) => u.id === p.id).hasId, true);
+  assert.equal((await raw(a.cookie(), `/api/admin/id/${p.id}`)).status, 403);
+  assert.equal((await raw((await adminClient()).cookie(), `/api/admin/id/${p.id}`)).status, 200);
+
+  // Approving now verifies them and shreds the document.
+  const ok = await admin("POST", `/api/admin/photo/${p.id}`, { action: "approve" });
+  assert.equal(ok.status, 200);
+  assert.equal(ok.body.photoStatus, "approved");
+  assert.equal(ok.body.verified, true);
+  assert.equal(ok.body.verificationMethod, "manual-id");
+  assert.equal(ok.body.hasId, false);
+  assert.equal((await raw((await adminClient()).cookie(), `/api/admin/id/${p.id}`)).status, 404);
+});
+
+test("a voter is not held to the photo confirmations they were never shown", async () => {
+  const c = client();
+  await c("POST", "/auth/signup", { email: "noconfirm@ex.com", password: "hunter2" });
+  // No photo, and confirmedAdult false because the confirmations card is hidden
+  // for voters. This must still succeed — otherwise voting is locked behind a
+  // gate that only exists for people uploading a face.
+  const r = await c("POST", "/api/profile", { name: "NoC", gender: "man", confirmedAdult: false });
+  assert.equal(r.status, 201);
+  assert.equal(r.body.hasPhoto, false);
+  assert.equal(r.body.isParticipant, false);
+
+  // The same submission WITH a photo is still refused.
+  const withPhoto = await c("POST", "/api/profile", { photo: await photoData(290), confirmedAdult: false });
+  assert.equal(withPhoto.status, 422);
+  assert.match(withPhoto.body.error, /18 or older/);
 });

@@ -5,6 +5,7 @@ import { profileFromAnswers } from "./questions.js";
 import { moralScore, moralAnswered, moralBreakdown, moralVerdict, worstVice, MORAL_QUESTIONS } from "./morality.js";
 import { screen } from "./moderation.js";
 import * as photos from "./photos.js";
+import * as identity from "./identity.js";
 import { urlFor } from "./phototokens.js";
 import { emptyAcc } from "./vectors.js";
 import { BASE_ELO } from "./engine.js";
@@ -96,9 +97,12 @@ export function create(p = {}) {
     losses: 0, // matchups lost
     deathVotes: { saved: 0, left: 0 }, // "you can only save one"
     cheatVotes: { yes: 0, no: 0 }, // "would you cheat for this person"
-    boardOptIn: false, // appear on the public winner/loser boards (opt-in only)
-    boardAgreedAt: null, // when they accepted the separate board agreement
-    boardAgreementVersion: null,
+    // Age/ID verification. A pass/fail plus a vendor reference — never the
+    // document itself. See the note at the top of src/identity.js.
+    identity: { verified: false, verifiedAt: null, method: null, reference: null },
+    idDoc: p.idDoc || null, // encrypted ID document id, for manual review — shredded on decision
+    idSubmittedAt: p.idDoc ? new Date().toISOString() : null,
+    idRequested: false, // an admin asked this person for ID before approving
     revealed: {}, // { gameKey: true } trait reveals you've purchased
     fansUnlocked: false, // "Who Likes You?" demographic report unlocked
     emailOnNewData: false,
@@ -135,6 +139,20 @@ export function moderatePhoto(id, action, reason, adminEmail) {
   mod.reviewedBy = adminEmail || "admin";
   mod.reviewedAt = new Date().toISOString();
   if (action === "approve") {
+    // If a reviewer asked this person for ID, approving before it arrives would
+    // silently undo that decision — usually a misclick. Refuse.
+    if (user.idRequested && !user.idDoc) {
+      mod.reason = "age check requested — waiting on their ID";
+      return user;
+    }
+    // Approving after an ID check IS the age confirmation. We record that it
+    // happened and nothing from the document itself.
+    if (user.idDoc && !user.identity?.verified) {
+      user.identity = identity.verificationRecord({ method: "manual-id", reference: `admin:${adminEmail}` });
+    } else if (!identity.mayGoLive(user)) {
+      mod.reason = identity.blockedReason(user);
+      return user; // only reachable when REQUIRE_ID_VERIFICATION forces it
+    }
     user.photoStatus = "approved";
     user.accountLocked = false;
   } else {
@@ -144,8 +162,18 @@ export function moderatePhoto(id, action, reason, adminEmail) {
     // storing images a reviewer has already judged unacceptable.
     if (user.photo) { photos.remove(user.photo); user.photo = null; }
   }
+  // Shred the ID on every decision — its only job was this review. See the note
+  // at the top of src/identity.js: we never keep a standing archive of IDs.
+  if (user.idDoc) { photos.remove(user.idDoc); user.idDoc = null; }
+  user.idRequested = false;
   persist();
   return user;
+}
+
+// The encrypted ID-document id for a profile, for admin-only serving. Never
+// exposed to anyone but an admin, and never through the public photo route.
+export function idDocOf(id) {
+  return get(id)?.idDoc || null;
 }
 
 // Profiles awaiting review, oldest first, plus recently decided ones.
@@ -160,14 +188,48 @@ export function moderationQueue({ limit = 50 } = {}) {
   };
 }
 
-// Join or leave the public boards. Leaving takes effect immediately — that
-// promise is made in the board agreement, so it must not be deferred or queued.
-export function setBoardOptIn(id, on, agreementVersion = null) {
+// Take a photo out of circulation immediately, before any human looks at it.
+// Used by urgent reports: an unfounded report costs someone a few hours; the
+// other way round is not recoverable.
+export function suspendPhoto(id, reason) {
   const user = get(id);
   if (!user) return null;
-  user.boardOptIn = !!on;
-  user.boardAgreedAt = on ? new Date().toISOString() : null;
-  user.boardAgreementVersion = on ? agreementVersion : null;
+  user.photoStatus = "pending";
+  user.moderation = {
+    ...(user.moderation || { flags: [] }),
+    flags: [...new Set([...(user.moderation?.flags || []), "reported"])],
+    reason: reason ? String(reason).slice(0, 300) : "reported — awaiting review",
+    reviewedBy: null,
+    reviewedAt: null,
+  };
+  persist();
+  return user;
+}
+
+// Record a completed verification. Takes only what src/identity.js allows out.
+export function setVerified(id, record) {
+  const user = get(id);
+  if (!user) return null;
+  user.identity = record;
+  persist();
+  return user;
+}
+
+// Ask this person for ID before their photo can be approved. Used when a
+// reviewer isn't confident about their age — the escalation that means we hold
+// IDs only for the people we were unsure about, never for everyone.
+export function requestId(id, adminEmail) {
+  const user = get(id);
+  if (!user) return null;
+  user.idRequested = true;
+  user.photoStatus = "pending";
+  user.moderation = {
+    ...(user.moderation || { flags: [] }),
+    flags: [...new Set([...(user.moderation?.flags || []), "age-check"])],
+    reason: "age check requested — please send a photo holding your ID",
+    reviewedBy: adminEmail || "admin",
+    reviewedAt: new Date().toISOString(),
+  };
   persist();
   return user;
 }
@@ -200,6 +262,11 @@ export function update(id, p = {}) {
   if (p.mentalHealth != null) user.mentalHealth = cleanFlags(p.mentalHealth);
   if (p.socials != null) user.socials = normSocials(p.socials);
   if (p.shareName != null) user.shareName = !!p.shareName;
+  if (p.idDoc != null) {
+    if (user.idDoc && user.idDoc !== p.idDoc) photos.remove(user.idDoc);
+    user.idDoc = p.idDoc || null;
+    user.idSubmittedAt = p.idDoc ? new Date().toISOString() : null;
+  }
   if (p.answers != null) {
     user.answers = { ...(user.answers || {}), ...p.answers }; // merge, don't clobber
     user.traits = profileFromAnswers(user.answers);
@@ -239,6 +306,7 @@ export function remove(id) {
   const before = users.length;
   const user = get(id);
   if (user?.photo) photos.remove(user.photo);
+  if (user?.idDoc) photos.remove(user.idDoc);
   users = users.filter((u) => u.id !== id);
   for (const u of users) if (u.ratings) delete u.ratings[id];
   persist();
@@ -328,18 +396,22 @@ export function guessStats(id) {
   return out;
 }
 
-// Matched-user view: reveals socials, which a mutual match consents to.
-export function matchView(u, viewerId) {
+// Participant card: the shape used on the Top 10 and anywhere a participant is
+// shown as a person rather than as an anonymous face to rate. Carries the
+// socials they chose to link; carries a name only if they opted into that.
+//
+// Deliberately NOT used in the rating pool — see publicView. A handle under a
+// face changes the vote, and every number here depends on the vote being about
+// the face alone.
+export function participantView(u, viewerId) {
   if (!u) return null;
-  // A match sees socials, and the name ONLY if they chose to share it.
   return {
     id: u.id,
     name: u.shareName ? u.name : null,
     photoUrl: urlFor(u.photo, viewerId),
     age: u.age,
     gender: u.gender,
-    socials: u.socials,
-    natureScore: u.natureScore || 0,
+    socials: u.socials || {},
   };
 }
 
@@ -390,7 +462,11 @@ export function ownerView(u, viewerId) {
     name: u.name, // your own name, for the profile form
     shareName: !!u.shareName,
     hasPhoto: !!u.photo,
-    boardOptIn: !!u.boardOptIn,
+    isParticipant: u.photoStatus === "approved",
+    idRequested: !!u.idRequested,
+    hasId: !!u.idDoc,
+    verified: !!u.identity?.verified,
+    verificationRequired: identity.REQUIRED,
     accountLocked: !!u.accountLocked,
     moderation: {
       flags: u.moderation?.flags || [],
@@ -414,6 +490,14 @@ export function adminView(u, viewerId) {
     genderIdentity: u.genderIdentity,
     photoStatus: u.photoStatus || "pending",
     photoSubmittedAt: u.photoSubmittedAt || u.createdAt,
+    verified: !!u.identity?.verified,
+    verifiedAt: u.identity?.verifiedAt || null,
+    verificationMethod: u.identity?.method || null,
+    mayGoLive: identity.mayGoLive(u),
+    hasId: !!u.idDoc,
+    idRequested: !!u.idRequested,
+    idSubmittedAt: u.idSubmittedAt || null,
+    idReviewMode: identity.MODE,
     accountLocked: !!u.accountLocked,
     moderation: u.moderation || { flags: [], reason: null },
     createdAt: u.createdAt,

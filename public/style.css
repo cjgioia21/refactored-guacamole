@@ -81,7 +81,12 @@ main { max-width: 720px; margin: 0 auto; padding: 18px 16px; }
 form { display: grid; gap: 14px; }
 label { display: grid; gap: 6px; font-weight: bold; font-size: 15px; }
 input, select, textarea { font-family: inherit; font-size: 16px; padding: 11px 13px; border: 1px solid var(--line); border-radius: 10px; background: var(--card); }
-.row3 { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 10px; }
+/* Grid items default to min-width:auto, so a text input's intrinsic ~170px
+   floor makes three of them overflow a narrow screen. Letting them shrink is
+   the fix; it also collapses to one column when there genuinely isn't room. */
+.row3 { display: grid; grid-template-columns: repeat(auto-fit, minmax(120px, 1fr)); gap: 10px; }
+.row3 > * { min-width: 0; }
+.row3 input, .row3 select { width: 100%; box-sizing: border-box; }
 fieldset { border: 1px solid var(--line); border-radius: 12px; margin: 0; }
 legend { color: var(--muted); font-size: 13px; padding: 0 6px; }
 
@@ -556,3 +561,116 @@ button.danger:hover { background: #a50d26; }
 }
 .board-stats b { font-size: 20px; }
 .board-you { display: inline-block; margin-left: 8px; font-size: 12px; font-weight: 700; color: #7c5cff; }
+
+/* ===== Reporting ===== */
+.report-flag {
+  position: absolute; top: 8px; right: 8px; z-index: 2;
+  width: 30px; height: 30px; border-radius: 50%; border: 0; cursor: pointer;
+  background: rgba(12, 12, 20, .45); color: #fff; font-size: 14px; line-height: 1;
+  opacity: .55; transition: opacity .15s, background .15s;
+}
+.report-flag:hover, .report-flag:focus-visible { opacity: 1; background: #c8102e; }
+/* .matchup and .versus are 1fr 1fr grids; the slot is the grid item and gives
+   the flag a positioned ancestor without nesting a button inside a button. */
+.vs-slot { position: relative; display: block; min-width: 0; }
+.cheat-photo { position: relative; }
+#report-modal { position: fixed; inset: 0; z-index: 70; display: grid; place-items: center; padding: 16px; background: rgba(10,10,18,.72); }
+#report-reasons .opt { display: block; margin: 6px 0; }
+#report-reasons .urgent { display: block; color: #c8102e; font-size: 12px; font-weight: 600; margin-top: 3px; }
+#report-modal textarea, #report-modal input {
+  width: 100%; padding: 10px 12px; border: 1px solid #ddd9ea; border-radius: 10px; font: inherit;
+}
+.report-result { margin-top: 12px; padding: 11px 13px; border-radius: 10px; }
+.report-result.ok { background: #eaf8ee; border: 1px solid #a8ddb8; }
+.report-result.no { background: #ffeceb; border: 1px solid #f2b3ae; }
+.report-detail {
+  margin: 8px 0 0; padding: 8px 12px; border-left: 3px solid #ddd6ff;
+  background: #f6f5fb; border-radius: 0 8px 8px 0; font-size: 14px;
+}
+
+/* ===== Admin tabs + SLA ===== */
+.admin-tabs { display: flex; gap: 8px; margin: 0 0 16px; }
+.admin-tabs button {
+  flex: 1; padding: 10px; border-radius: 10px; border: 1px solid #ddd9ea;
+  background: #fff; font: inherit; font-weight: 600; cursor: pointer; color: #6b6b74;
+}
+.admin-tabs button.active { background: #1a3fd0; border-color: #1a3fd0; color: #fff; }
+.sla-ok { border-left: 4px solid #2c9c5a; }
+.sla-late { border-left: 4px solid #c8102e; }
+
+/* ===== Voter / participant fork ===== */
+.role-options { display: grid; gap: 10px; grid-template-columns: 1fr; }
+@media (min-width: 560px) { .role-options { grid-template-columns: 1fr 1fr; } }
+.role-option {
+  text-align: left; padding: 14px 16px; border-radius: 14px; cursor: pointer;
+  border: 2px solid #ddd9ea; background: #fff; font: inherit; color: inherit;
+}
+.role-option b { display: block; font-size: 16px; margin-bottom: 4px; }
+.role-option span { display: block; font-size: 13px; color: #6b6b74; line-height: 1.45; }
+.role-option.sel { border-color: #1a3fd0; background: #f2f5ff; }
+#id-preview img { max-width: 100%; border-radius: 12px; margin-top: 10px; }
+
+/* ===== Top 10 standing ===== */
+.standing-rank { font-size: 17px; }
+.standing-rank b { font-size: 30px; letter-spacing: -.02em; }
+.standing-line { margin: 6px 0 4px; font-size: 16px; }
+.standing-line b { color: #1a3fd0; }
+.socials { display: block; margin-top: 6px; }
+.socials .pill { font-size: 12px; }
+
+/* ===== Compatibility Gap ===== */
+.gap-row { margin: 10px 0; }
+.gap-label { display: flex; justify-content: space-between; font-size: 14px; margin-bottom: 4px; }
+.gap-label b { font-variant-numeric: tabular-nums; }
+.gap-track { height: 14px; border-radius: 999px; background: #eceaf4; overflow: hidden; }
+.gap-track i { display: block; height: 100%; }
+.gap-track i.type { background: #7c5cff; }
+.gap-track i.fans { background: #ff8a3d; }
+.gap-verdict { margin: 12px 0 6px; font-size: 16px; font-weight: 600; }
+
+/* ===== Self-report vs reality ===== */
+.mirror-key { display: flex; gap: 14px; font-size: 12px; margin-bottom: 10px; }
+.mirror-key .k::before {
+  content: ""; display: inline-block; width: 10px; height: 10px; border-radius: 3px; margin-right: 5px;
+}
+.mirror-key .self::before { background: #1a3fd0; }
+.mirror-key .crowd::before { background: #d94fd0; }
+.mirror-row { padding: 10px 0; border-bottom: 1px solid #eceaf4; }
+.mirror-row:last-child { border-bottom: 0; }
+.mirror-head { display: flex; justify-content: space-between; align-items: baseline; font-size: 14px; font-weight: 600; }
+.mirror-head b { font-size: 13px; font-weight: 600; color: #6b6b74; }
+.mirror-head b.wide { color: #c8102e; }
+.mirror-bars { display: grid; gap: 4px; margin: 6px 0 4px; }
+.mirror-bar { position: relative; height: 16px; border-radius: 6px; background: #f1eff8; }
+.mirror-bar span { display: block; height: 100%; border-radius: 6px; }
+.mirror-bar.self span { background: #1a3fd0; }
+.mirror-bar.crowd span { background: #d94fd0; }
+.mirror-bar i, .mirror-bar em {
+  position: absolute; right: 6px; top: 0; line-height: 16px; font-size: 11px;
+  font-style: normal; color: #4b4b55; font-variant-numeric: tabular-nums;
+}
+.mirror-poles { display: flex; justify-content: space-between; font-size: 11px; color: #8a8a95; }
+
+/* ===== Reciprocity ===== */
+.recip { display: flex; align-items: baseline; gap: 12px; margin-bottom: 8px; }
+.recip b { font-size: 38px; line-height: 1; letter-spacing: -.02em; }
+.recip span { font-size: 15px; color: #4b4b55; }
+
+/* ===== Scatter ===== */
+.scatter-wrap { margin: 4px 0 8px; }
+.scatter { width: 100%; height: auto; display: block; }
+.scatter .axis { stroke: #ddd9ea; stroke-width: 1; }
+.scatter .zero { stroke: #eceaf4; stroke-width: 1; stroke-dasharray: 3 3; }
+.scatter .dot { fill: #b9b4d4; }
+.scatter .dot.you { fill: #d94fd0; stroke: #fff; stroke-width: 2; }
+.scatter .ax { font-size: 9px; fill: #8a8a95; }
+.scatter-legend { display: flex; justify-content: space-between; font-size: 12px; color: #8a8a95; }
+.scatter-legend .you-key::before {
+  content: ""; display: inline-block; width: 9px; height: 9px; border-radius: 50%;
+  background: #d94fd0; margin-right: 5px;
+}
+
+/* ===== Admin ID review ===== */
+.id-review { margin-top: 10px; padding: 10px; border-radius: 10px; background: #fff8e6; border: 1px solid #f0d089; }
+.id-review b { display: block; font-size: 13px; margin-bottom: 6px; }
+.id-review img { width: 100%; border-radius: 8px; display: block; }

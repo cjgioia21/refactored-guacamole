@@ -24,13 +24,11 @@ others and pick who's more attractive. From those choices TrueHumanNature builds
   else said: *"61% of people gave the same answer."* The report turns it into a
   verdict — **Sanctimonious / Decent / Compromised / Rotten / Irredeemable** —
   a per-vice breakdown, and where you rank against everyone who's taken it.
-- **Matches** — a match takes four things: you both took the morality quiz, you
-  each rated the other over other people, you each picked the other **at least
-  3 times**, and your Human Nature scores land **within 25 points**. On a match,
-  you each see the other's **socials** (Instagram, etc.) so you can reach out.
+- **Where you rank** — your position among everyone of your gender by win rate,
+  and the Top 10 if you make it.
 
-Socials stay private until you match. Photos are shown only inside the rating
-games; questionnaire answers are never shown to anyone.
+Photos are shown only inside the rating games; questionnaire answers are never
+shown to anyone.
 
 ## The numbers it shows you
 
@@ -48,14 +46,48 @@ person?"** (one photo, yes or no).
 never a name. Your name and socials reach only people you mutually match with,
 and your name only if you switch that on yourself.
 
-## The boards
+## Voters and participants
 
-Opt-in, off by default, behind a **separate agreement** with its own version and
-acceptance record. Opting in puts your photo on a ranked list of everyone who
-joined — including the list of the **lowest-rated** people on the site, and you
-don't choose which end you land on. You need 50+ matchups to appear at all, so
-nobody is ranked "worst" off six votes of noise, and removal is one click and
-immediate. `BOARDS_ENABLED=0` switches the whole feature off.
+Two ways to use it. **Voters** create an account and rate people — no photo, no
+ID, never rated themselves. They have to be signed in, which is what makes
+duplicate accounts and vote-stuffing detectable. **Participants** upload a photo
+and go into the pool; every photo is reviewed by a human before anyone sees it.
+
+Age is checked in three stages, and only the last touches an ID: you confirm
+you're 18+, a human reviews your photo, and **if the reviewer isn't sure about
+your age they request ID** — a photo of you holding it next to your face. It's
+encrypted, shown only to a reviewer, and **shredded the moment they decide**. So
+there is never a standing archive of IDs, only the handful currently in review.
+
+## The Top 10
+
+The ten most-chosen faces of each gender, **ranked strictly by the share of
+head-to-head matchups won**. Visible to everyone signed in, with **no opt-out** —
+being ranked is what the site does, and the Terms say so. You need 50+ matchups
+to place, so a 2–0 record can't own the board on noise.
+
+Everyone else sees their own standing: *"You rank #718 · 41% win rate · Top
+12.4%."* `BOARDS_ENABLED=0` switches the whole feature off.
+
+## Four mirrors
+
+Built from votes already cast, no new data collected:
+
+- **Compatibility Gap** — the average attractiveness percentile of the people
+  you pick against the people who pick you, as two bars and one blunt line.
+- **Who you think you are / Who you look like** — your own answer on every axis
+  beside what strangers guessed from the photo alone.
+- **Reciprocity** — *"14 of the 63 people you chose also chose you."*
+- **Morality vs. Attractiveness** — a scatter of everyone who qualifies, your
+  dot picked out. No trend line and no caption.
+
+## Socials, not dating
+
+This is not a matchmaking app: there is no matching, and nobody is introduced to
+anybody. Participants may **optionally link their socials**, shown on their
+profile and on the Top 10. They are never shown while someone is rating you — a
+handle under a face changes the vote, and every number here depends on that vote
+being about the face alone.
 
 ## Legal
 
@@ -152,12 +184,12 @@ four confirmation checkboxes that gate the **submit my face** button.
 - **Learned type** — every vote folds the chosen winner's demographics into the
   voter's type: gender counts, age lean (`winnerAge − voterAge`), mental-health
   openness, and a running trait vector. `typeSummary()` renders it in plain words.
-- **Matches (revealed preference)** — every vote records that the voter rated the
-  winner over the loser (`ratings[id] = {w, l}`). `likes(a, b)` is true when `a`
-  picked `b` over others more often than not; `mutualMatches` returns everyone you
-  *and* they both like. That mutual match reveals socials.
-- **Suggestions** — `matchScore` (predicted mutual attraction: orientation/gender
-  prior, learned preference, type-fit, attractiveness) powers "go rate these next".
+- **Revealed preference** — every vote records that the voter rated the winner
+  over the loser (`ratings[id] = {w, l}`). `likes(a, b)` is true when `a` picked
+  `b` over others more often than not. That single structure powers the
+  Reciprocity Score, the Compatibility Gap, and the rejection counts.
+- **The Top 10** — `topTen` ranks by win rate within a gender behind a
+  50-matchup floor; `standingOf` gives everyone else a rank and a percentile.
 - **Guessing games** — `guessOutcome` scores guesses; per-game accuracy is tracked
   (`store.guessStats`), and each guess is also aggregated onto the *target* photo
   (`store.recordGuessAbout`) to power its "what strangers guess" reveals.

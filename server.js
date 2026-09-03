@@ -13,11 +13,13 @@ import * as photos from "./src/photos.js";
 import * as phototokens from "./src/phototokens.js";
 import * as legal from "./src/legal.js";
 import * as geo from "./src/geo.js";
+import * as identity from "./src/identity.js";
+import * as reports from "./src/reports.js";
 import {
-  recordVote, report, guessOutcome, matchScore, mutualMatches, likes,
+  recordVote, report, guessOutcome, likes,
   GAMES, gameByKey, attractivenessBand, guessConsensus, fansReport, tasteReport, TASTES,
-  NATURE_WINDOW, MIN_MUTUAL_PICKS, canMatch, matchGates, quizDone, axisValue, VERSUS_AXES,
-  leaderboard, boardEligible, BOARD_MIN_MATCHUPS, winRate, rankOf,
+  axisValue, VERSUS_AXES, moralityVsLooks,
+  topTen, boardGenders, standingOf, boardEligible, isParticipant, BOARD_MIN_MATCHUPS, winRate, rankOf,
 } from "./src/engine.js";
 
 // Admin accounts, by email — set ADMIN_EMAILS="you@example.com,other@example.com".
@@ -88,8 +90,10 @@ const oauthStates = new Set();
 // Where a finished score sits against everyone else who finished the quiz.
 // Null until the user has taken enough of it for the number to mean anything.
 function moralPercentile(me, population) {
-  if (!quizDone(me)) return null;
-  const scores = population.filter((u) => u.id !== me.id && quizDone(u)).map((u) => u.natureScore || 0);
+  if ((me.moralAnswered || 0) < MORAL_MIN_ANSWERED) return null;
+  const scores = population
+    .filter((u) => u.id !== me.id && (u.moralAnswered || 0) >= MORAL_MIN_ANSWERED)
+    .map((u) => u.natureScore || 0);
   if (scores.length < 3) return null;
   const worse = scores.filter((s) => s < (me.natureScore || 0)).length;
   return Math.round((worse / scores.length) * 100);
@@ -269,8 +273,9 @@ app.get("/api/meta", (_req, res) =>
   res.json({ axes: AXES, guessAxes: GUESS_AXES, games: GAMES, cost: COST, pairsAmount: PAIRS_AMOUNT,
     tastes: TASTES.map((t) => ({ key: t.key, title: t.title, unlockAt: t.unlockAt })),
     creditPerVotes: CREDIT_PER_VOTES,
-    match: { natureWindow: NATURE_WINDOW, minPicks: MIN_MUTUAL_PICKS, minQuiz: MORAL_MIN_ANSWERED },
+    board: { minMatchups: BOARD_MIN_MATCHUPS },
     vices: VICES, moralTotal: MORAL_QUESTIONS.length,
+    verification: { required: identity.REQUIRED, configured: identity.configured(), mode: identity.MODE },
     game: { rounds: GAME_ROUNDS, need: GAME_NEED, reward: GAME_REWARD } })
 );
 
@@ -292,6 +297,18 @@ app.post("/api/profile", async (req, res) => {
   } else {
     delete body.photo; // editing without re-uploading keeps the existing photo
   }
+  // The ID document, if one was submitted, goes through the same sanitize +
+  // encrypt path as a photo. It is never returned to any client and is shredded
+  // the moment you make a moderation decision (see store.moderatePhoto).
+  if (body.idDocument) {
+    try {
+      body.idDoc = await photos.put(body.idDocument);
+    } catch (err) {
+      if (err instanceof photos.PhotoError) return res.status(400).json({ error: `ID document: ${err.message}` });
+      throw err;
+    }
+  }
+  delete body.idDocument; // never store the raw field
   let profile;
   if (account.profileId && store.get(account.profileId)) {
     const existing = store.get(account.profileId);
@@ -381,8 +398,10 @@ app.get("/api/report", requireProfile, (req, res) => {
 
   res.json({
     ...base,
-    // Mint a short-lived photo URL for each near-match.
-    almost: base.almost.map((m) => ({ ...m, photoUrl: store.publicView(store.get(m.id), req.account.id).photoUrl })),
+    // The scatter is the whole platform at once, so it's built here where the
+    // population is in hand. Dots carry no ids — just coordinates.
+    moralityVsLooks: moralityVsLooks(pop, me),
+    standing: standingOf(me, pop),
     credits: me.credits || 0,
     cost: COST,
     prediction: me.prediction ?? null,
@@ -390,7 +409,6 @@ app.get("/api/report", requireProfile, (req, res) => {
     moderation: { reason: me.moderation?.reason || null, reviewedAt: me.moderation?.reviewedAt || null },
     nature: {
       ...store.moralReport(me),
-      window: NATURE_WINDOW,
       minAnswered: MORAL_MIN_ANSWERED,
       // Where your score sits against everyone who has finished the quiz.
       harsherThan: moralPercentile(me, pop),
@@ -407,28 +425,6 @@ app.get("/api/report", requireProfile, (req, res) => {
       report: me.fansUnlocked ? fansReport(me, pop) : null,
     },
   });
-});
-
-// Mutual matches: you both rated each other over other people -> socials revealed.
-app.get("/api/matches", requireProfile, (req, res) => {
-  res.json(
-    mutualMatches(req.profile, store.visible(), { limit: 30 }).map((m) => ({
-      user: store.matchView(m.user, req.account.id),
-      youPickRate: m.youPickRate,
-      theyPickRate: m.theyPickRate,
-      strength: m.strength,
-      yourPicks: m.yourPicks,
-      theirPicks: m.theirPicks,
-      natureGap: m.natureGap,
-    }))
-  );
-});
-
-app.get("/api/match/:a/:b", (req, res) => {
-  const a = store.get(req.params.a);
-  const b = store.get(req.params.b);
-  if (!a || !b) return res.status(404).json({ error: "not found" });
-  res.json({ ...matchScore(a, b, store.visible()), mutual: canMatch(a, b), gates: matchGates(a, b) });
 });
 
 // ---------- Guessing games ----------
@@ -587,46 +583,113 @@ app.post("/api/email-pref", requireProfile, (req, res) => {
 });
 
 // ---------- Buy credits ----------
-// ---------- The public boards ----------
-// Opt-in only, visible to signed-in users only, and switchable off entirely.
-const BOARDS_ENABLED = process.env.BOARDS_ENABLED !== "0";
-
-app.get("/api/leaderboard", requireProfile, (req, res) => {
-  if (!BOARDS_ENABLED) return res.status(503).json({ error: "boards are disabled" });
-  const board = leaderboard(store.visible(), { limit: 10 });
-  const decorate = (rows) => rows.map((r) => ({
-    ...r,
-    photoUrl: store.publicView(store.get(r.id), req.account.id).photoUrl,
-    you: r.id === req.profile.id,
-  }));
+// ---------- Age / ID verification ----------
+// See src/identity.js: the vendor holds the document, we keep a pass/fail.
+app.get("/api/verify", requireProfile, (req, res) => {
   res.json({
-    ...board,
-    top: decorate(board.top),
-    bottom: decorate(board.bottom),
-    me: {
-      optedIn: !!req.profile.boardOptIn,
-      eligible: boardEligible(req.profile),
-      matchups: req.profile.matchups || 0,
-      minMatchups: BOARD_MIN_MATCHUPS,
-      agreementVersion: legal.DOCS.board.version,
-      accepted: req.profile.boardAgreementVersion === legal.DOCS.board.version,
-    },
+    required: identity.REQUIRED,
+    configured: identity.configured(),
+    mode: identity.MODE, // "manual" | "vendor" | "none"
+    provider: identity.MODE === "vendor" ? identity.PROVIDER : null,
+    verified: !!req.profile.identity?.verified,
+    verifiedAt: req.profile.identity?.verifiedAt || null,
+    hasId: !!req.profile.idDoc,
+    idRequested: !!req.profile.idRequested,
+    blockedReason: identity.blockedReason(req.profile),
   });
 });
 
-// Joining requires accepting the separate board agreement in the same call.
-// Leaving requires nothing and happens immediately.
-app.post("/api/board-optin", requireProfile, (req, res) => {
-  if (!BOARDS_ENABLED) return res.status(503).json({ error: "boards are disabled" });
-  const on = !!req.body?.on;
-  if (on) {
-    if (req.body?.agreementVersion !== legal.DOCS.board.version) {
-      return res.status(400).json({ error: "you must accept the current Leaderboard Terms", version: legal.DOCS.board.version });
-    }
-    auth.recordAgreement(req.account.id, "board", legal.acceptanceRecord("board", clientIp(req)));
+app.post("/api/verify/start", requireProfile, async (req, res) => {
+  if (req.profile.identity?.verified) return res.json({ ok: true, verified: true });
+  try {
+    const { url, reference } = await identity.start(req.profile, {
+      returnUrl: `${req.protocol}://${req.get("host")}/?verified=1`,
+    });
+    res.json({ ok: true, url, reference });
+  } catch (err) {
+    if (err instanceof identity.VerificationError) return res.status(503).json({ error: err.message });
+    throw err;
   }
-  store.setBoardOptIn(req.profile.id, on, on ? legal.DOCS.board.version : null);
-  res.json({ ok: true, optedIn: on, eligible: boardEligible(req.profile) });
+});
+
+// Poll the vendor for a terminal status. A webhook is better in production;
+// this keeps the flow working without one.
+app.post("/api/verify/check", requireProfile, async (req, res) => {
+  const reference = String(req.body?.reference || "");
+  if (!reference) return res.status(400).json({ error: "missing reference" });
+  const out = await identity.resolve(reference);
+  if (out.verified) {
+    store.setVerified(req.profile.id, identity.verificationRecord({ method: out.method, reference }));
+  }
+  res.json({ status: out.status, verified: !!out.verified });
+});
+
+// ---------- Reports and takedowns ----------
+// Deliberately open to signed-out visitors: the Terms say you shouldn't need an
+// account to report your own face, and that has to be true in the code too.
+app.get("/api/report-reasons", (_req, res) =>
+  res.json({ reasons: Object.entries(reports.REASONS).map(([key, r]) => ({ key, ...r })) }));
+
+app.post("/api/report", (req, res) => {
+  const { targetId, reason, detail, contact } = req.body || {};
+  const target = store.get(targetId);
+  if (!target || !reports.REASONS[reason]) return res.status(400).json({ error: "invalid report" });
+  const reporter = myProfile(req);
+  const report = reports.file({ targetId, reason, detail, contact, reporterId: reporter?.id || null });
+
+  // Urgent reasons hide the photo before a human looks at it.
+  if (report.urgent) store.suspendPhoto(targetId, `reported: ${reports.REASONS[reason].label}`);
+  store.save();
+  res.status(201).json({
+    ok: true,
+    urgent: report.urgent,
+    response: reports.REASONS[reason].response,
+    hidden: report.urgent,
+  });
+});
+
+app.get("/api/admin/reports", requireAdmin, (_req, res) => {
+  res.json({
+    open: reports.open().map((r) => ({ ...r, target: store.adminView(store.get(r.targetId), _req.account?.id) })),
+    oldestOpenHours: reports.oldestOpenAgeHours(),
+    total: reports.all().length,
+  });
+});
+
+app.post("/api/admin/reports/:id", requireAdmin, (req, res) => {
+  const { status, resolution } = req.body || {};
+  const r = reports.resolve(req.params.id, { status, resolution, by: req.account.email });
+  if (!r) return res.status(400).json({ error: "invalid resolution" });
+  res.json(r);
+});
+
+// ---------- The Top 10 ----------
+// Visible to every signed-in user, with no opt-out: appearing here is a term of
+// putting your face in the pool (legal/terms.md §6). Not on the open web —
+// photos still go out only through expiring, per-viewer links.
+const BOARDS_ENABLED = process.env.BOARDS_ENABLED !== "0";
+
+app.get("/api/leaderboard", requireProfile, (req, res) => {
+  if (!BOARDS_ENABLED) return res.status(503).json({ error: "the leaderboard is switched off" });
+  const pop = store.visible();
+
+  // A row carries the participant card — photo plus whatever socials they chose
+  // to link. This is the payoff for making it.
+  const decorate = (rows) => rows.map((r) => {
+    const u = store.get(r.id);
+    return { ...r, ...store.participantView(u, req.account.id), you: r.id === req.profile.id };
+  });
+
+  res.json({
+    minMatchups: BOARD_MIN_MATCHUPS,
+    boards: boardGenders(pop).map((gender) => {
+      const board = topTen(pop, gender, { limit: 10 });
+      return { ...board, rows: decorate(board.rows) };
+    }),
+    // Everyone who has a live photo sees where they stand, in or out of the ten.
+    you: standingOf(req.profile, pop),
+    isParticipant: isParticipant(req.profile),
+  });
 });
 
 // ---------- Admin: photo approval queue ----------
@@ -639,11 +702,55 @@ app.get("/api/admin/queue", requireAdmin, (req, res) => {
   });
 });
 
+// Mark an account verified by hand — the fallback when no vendor is wired up,
+// and the override when a vendor gets it wrong.
+app.get("/api/admin/id/:id", requireAdmin, (req, res) => {
+  const docId = store.idDocOf(req.params.id);
+  if (!docId) return res.status(404).end();
+  const buf = photos.get(docId);
+  if (!buf) return res.status(404).end();
+  res.set({
+    "Content-Type": "image/jpeg",
+    "Content-Length": String(buf.length),
+    "Cache-Control": "private, no-store, max-age=0",
+    "X-Robots-Tag": "noindex, noimageindex, nofollow",
+    "Content-Security-Policy": "default-src 'none'; sandbox",
+    "X-Content-Type-Options": "nosniff",
+    "Cross-Origin-Resource-Policy": "same-origin",
+  });
+  res.end(buf);
+});
+
+app.post("/api/admin/verify/:id", requireAdmin, (req, res) => {
+  const target = store.get(req.params.id);
+  if (!target) return res.status(404).json({ error: "not found" });
+  const on = req.body?.verified !== false;
+  store.setVerified(target.id, on
+    ? identity.verificationRecord({ method: "manual", reference: `admin:${req.account.email}` })
+    : { verified: false, verifiedAt: null, method: null, reference: null });
+  res.json(store.adminView(target, req.account.id));
+});
+
 app.post("/api/admin/photo/:id", requireAdmin, (req, res) => {
   const { action, reason } = req.body || {};
+  // "request-id" is the escalation that keeps us from collecting ID from
+  // everyone: ask only when a reviewer isn't sure about someone's age.
+  if (action === "request-id") {
+    const updated = store.requestId(req.params.id, req.account.email);
+    if (!updated) return res.status(404).json({ error: "not found" });
+    return res.json(store.adminView(updated, req.account.id));
+  }
   if (!["approve", "reject", "escalate"].includes(action)) return res.status(400).json({ error: "unknown action" });
   const updated = store.moderatePhoto(req.params.id, action, reason, req.account.email);
   if (!updated) return res.status(404).json({ error: "not found" });
+  if (action === "approve" && updated.photoStatus !== "approved") {
+    // Surface the store's own reason — "waiting on their ID" is far more use to
+    // a reviewer than a generic refusal.
+    return res.status(409).json({
+      error: updated.moderation?.reason || identity.blockedReason(updated) || "cannot approve",
+      profile: store.adminView(updated, req.account.id),
+    });
+  }
   res.json(store.adminView(updated, req.account.id));
 });
 

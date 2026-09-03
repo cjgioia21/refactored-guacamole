@@ -97,88 +97,6 @@ export function pickRate(user, otherId) {
   return r.w / (r.w + r.l);
 }
 
-// ---------- Match gating ----------
-// A match is deliberately hard to earn: mutual revealed preference, repeated
-// enough times to not be a fluke, between two people whose Human Nature scores
-// are close enough that they'd actually stand each other.
-export const NATURE_WINDOW = 25; // max |a.natureScore - b.natureScore|
-export const MIN_MUTUAL_PICKS = 3; // each must have picked the other this often
-// Both people must have actually taken the morality quiz. Without this, two
-// people who skipped it both sit at score 0 and match instantly — which would
-// hand out matches to exactly the people the score is meant to filter.
-export const MORAL_MIN = MORAL_MIN_ANSWERED;
-export const quizDone = (u) => (u?.moralAnswered || 0) >= MORAL_MIN;
-
-export function natureGap(a, b) {
-  return Math.abs((a.natureScore || 0) - (b.natureScore || 0));
-}
-
-// Every gate, evaluated separately so the UI can explain what's still missing.
-export function matchGates(a, b) {
-  const you = a.ratings?.[b.id] || { w: 0, l: 0 };
-  const them = b.ratings?.[a.id] || { w: 0, l: 0 };
-  const gap = natureGap(a, b);
-  return {
-    mutual: likes(a, b.id) && likes(b, a.id),
-    picks: you.w >= MIN_MUTUAL_PICKS && them.w >= MIN_MUTUAL_PICKS,
-    nature: gap <= NATURE_WINDOW,
-    quiz: quizDone(a) && quizDone(b),
-    yourQuiz: quizDone(a),
-    theirQuiz: quizDone(b),
-    yourPicks: you.w,
-    theirPicks: them.w,
-    natureGap: gap,
-  };
-}
-
-export function canMatch(a, b) {
-  if (!a || !b || a.id === b.id) return false;
-  const g = matchGates(a, b);
-  return g.mutual && g.picks && g.nature && g.quiz;
-}
-
-// A match is mutual revealed preference that clears every gate above.
-// This is what reveals two users' socials to each other.
-export function mutualMatches(user, population, { limit = 20 } = {}) {
-  return population
-    .filter((o) => canMatch(user, o))
-    .map((o) => {
-      const you = user.ratings[o.id];
-      const them = o.ratings[user.id];
-      return {
-        user: o,
-        strength: you.w - you.l + (them.w - them.l),
-        youPickRate: Math.round(pickRate(user, o.id) * 100),
-        theyPickRate: Math.round(pickRate(o, user.id) * 100),
-        yourPicks: you.w,
-        theirPicks: them.w,
-        natureGap: natureGap(user, o),
-      };
-    })
-    .sort((a, b) => b.strength - a.strength)
-    .slice(0, limit);
-}
-
-// People you both like but who don't clear the remaining gates yet — shown so
-// a user knows a match is *close* and what it's waiting on.
-export function nearMatches(user, population, { limit = 10 } = {}) {
-  return population
-    .filter((o) => o.id !== user.id && likes(user, o.id) && likes(o, user.id) && !canMatch(user, o))
-    .map((o) => {
-      const g = matchGates(user, o);
-      return {
-        user: o,
-        yourPicks: g.yourPicks,
-        theirPicks: g.theirPicks,
-        natureGap: g.natureGap,
-        // Report the gate they can actually do something about first.
-        blockedBy: !g.yourQuiz ? "your-quiz" : !g.theirQuiz ? "their-quiz" : !g.nature ? "nature" : "picks",
-        picksToGo: Math.max(0, MIN_MUTUAL_PICKS - g.yourPicks),
-      };
-    })
-    .slice(0, limit);
-}
-
 // Fold a chosen winner's demographics into the voter's learned type buckets.
 function learnPreference(type, winner, voter) {
   type.n = (type.n || 0) + 1;
@@ -239,43 +157,6 @@ export function typeSummary(user) {
   return { text: parts.join(", ") || "not enough data yet", parts };
 }
 
-// Predicted one-way attraction of `viewer` to `target`, 0..100.
-// Orientation/gender prior × learned gender pref × type-fit × attractiveness.
-function attractionScore(viewer, target, population) {
-  const wants = attractedGenders(viewer.orientation, viewer.gender);
-  const orientationFit = !target.gender || wants.includes(target.gender) ? 1 : 0.05;
-
-  // learned gender preference (from votes), if any
-  const g = viewer.type?.gender || {};
-  const total = Object.values(g).reduce((a, b) => a + b, 0);
-  const learnedGender = total && target.gender ? (g[target.gender] || 0) / total : null;
-  const genderFit = learnedGender == null ? orientationFit : 0.5 * orientationFit + 0.5 * learnedGender;
-
-  const traitFit = similarity(viewer.type?.vector || {}, target.traits); // 0..1
-  const looks = percentile(target, population) / 100; // 0..1
-  const typeWeight = Math.min((viewer.type?.n || 0) / 10, 1);
-  const core =
-    typeWeight * (0.6 * traitFit + 0.4 * looks) + (1 - typeWeight) * (0.5 * traitFit + 0.5 * looks);
-
-  return Math.round(core * genderFit * 100);
-}
-
-// Mutual attraction — the harmonic mean of both directions.
-export function matchScore(a, b, population) {
-  const aLikesB = attractionScore(a, b, population);
-  const bLikesA = attractionScore(b, a, population);
-  const mutual = Math.round((2 * aLikesB * bLikesA) / (aLikesB + bLikesA || 1));
-  return { score: mutual, aLikesB, bLikesA };
-}
-
-export function findMatches(user, population, { limit = 10 } = {}) {
-  return population
-    .filter((u) => u.id !== user.id)
-    .map((u) => ({ user: u, ...matchScore(user, u, population) }))
-    .sort((x, y) => y.score - x.score)
-    .slice(0, limit);
-}
-
 export function report(user, population) {
   return {
     id: user.id,
@@ -290,35 +171,17 @@ export function report(user, population) {
     rank: rankOf(user, population),
     rejectedBy: rejectedBy(user, population),
     chosenBy: chosenBy(user, population),
+    abandonedBy: abandonedBy(user, population),
     prediction: predictionDelta(user, population),
     death: deathReport(user),
     cheat: cheatReport(user),
     likedBy: describe(user.admirers.vector), // trait profile of admirers
     yourType: typeSummary(user), // learned from the photos you chose
     selfTraits: describe(user.traits),
-    // Mutual matches: you both rated each other over others -> messaging unlocked.
-    matches: mutualMatches(user, population, { limit: 12 }).map((m) => ({
-      id: m.user.id,
-      // Name only if they chose to share it with matches.
-      name: m.user.shareName ? m.user.name : null,
-      youPickRate: m.youPickRate,
-      theyPickRate: m.theyPickRate,
-      natureGap: m.natureGap,
-    })),
-    // People you rated highly who haven't matched you back yet.
-    crushes: population.filter((o) => o.id !== user.id && likes(user, o.id) && !likes(o, user.id)).length,
-    // Both of you like each other but a gate isn't cleared yet.
-    // The photo is left off here: only the server can mint a viewer-bound
-    // photo URL, so it decorates these before they go out.
-    almost: nearMatches(user, population, { limit: 6 }).map((m) => ({
-      id: m.user.id,
-      blockedBy: m.blockedBy, picksToGo: m.picksToGo, natureGap: m.natureGap,
-    })),
-    // Suggested profiles (predicted mutual attraction) to go rate next.
-    suggestions: findMatches(user, population, { limit: 4 }).map((m) => ({
-      id: m.user.id,
-      score: m.score,
-    })),
+    // The four mirrors — all derived from votes already cast.
+    compatibilityGap: compatibilityGap(user, population),
+    selfVsCrowd: selfVsCrowd(user),
+    reciprocity: reciprocity(user, population),
   };
 }
 
@@ -381,6 +244,17 @@ export function chosenBy(user, population) {
   return population.filter((o) => o.id !== user.id && (o.ratings?.[user.id]?.w || 0) > 0).length;
 }
 
+// The cruellest number the data holds: people who picked you at least once and
+// then, later, looked at you next to someone else and picked them instead.
+// Not strangers who never wanted you — people who did, and changed their mind.
+export function abandonedBy(user, population) {
+  return population.filter((o) => {
+    if (o.id === user.id) return false;
+    const r = o.ratings?.[user.id];
+    return (r?.w || 0) > 0 && (r?.l || 0) > 0;
+  }).length;
+}
+
 // The gap between what you predicted about yourself and what strangers said.
 // Positive `gap` means you overrated yourself, which is the interesting case.
 export function predictionDelta(user, population) {
@@ -402,37 +276,201 @@ export function predictionDelta(user, population) {
   };
 }
 
-// ---------- The public boards ----------
-// Opt-in only, and only once a profile has been rated enough that its position
-// means something. Someone who has been shown six times should never be able to
-// land on a board titled "worst rated on the site" off pure noise.
+// ---------- The Top 10 ----------
+// Ranked strictly by the share of head-to-head matchups won — who other people
+// actually pick. Making it is an achievement; there is no opt-out, because
+// appearing here is a term of putting your face in the pool (see legal/terms.md).
+//
+// The matchup floor is what keeps it honest: without it a 2-0 record reads as
+// 100% and owns the board on pure noise.
 export const BOARD_MIN_MATCHUPS = 50;
 
-export function boardEligible(user) {
-  return !!user.boardOptIn
-    && user.photoStatus === "approved"
-    && (user.matchups || 0) >= BOARD_MIN_MATCHUPS;
+// A participant is anyone whose photo is live. Voters have no photo and are
+// never ranked.
+export const isParticipant = (user) => user?.photoStatus === "approved";
+export const boardEligible = (user) => isParticipant(user) && (user?.matchups || 0) >= BOARD_MIN_MATCHUPS;
+
+// Win rate first, then matchups — someone who went 60% over 400 pairs outranks
+// someone who went 60% over 51.
+const byWinRate = (a, b) => (winRate(b) - winRate(a)) || ((b.matchups || 0) - (a.matchups || 0));
+
+// Everyone eligible in one gender cohort, best first.
+export function rankedCohort(population, gender) {
+  return population
+    .filter((u) => boardEligible(u) && (!gender || u.gender === gender))
+    .sort(byWinRate);
 }
 
-// Top N and bottom N among opted-in, eligible profiles. Returns the same shape
-// for both so the UI renders one component twice.
-export function leaderboard(population, { limit = 10 } = {}) {
-  const ranked = population.filter(boardEligible).sort((a, b) => b.elo - a.elo);
-  const row = (u, i) => ({
-    id: u.id,
-    rank: i + 1,
-    of: ranked.length,
-    winRate: winRate(u),
-    wins: u.wins || 0,
-    losses: u.losses || 0,
-    matchups: u.matchups || 0,
-  });
+const boardRow = (u, i, of) => ({
+  id: u.id,
+  rank: i + 1,
+  of,
+  winRate: winRate(u),
+  wins: u.wins || 0,
+  losses: u.losses || 0,
+  matchups: u.matchups || 0,
+});
+
+// The Top N for one gender.
+export function topTen(population, gender, { limit = 10 } = {}) {
+  const ranked = rankedCohort(population, gender);
   return {
-    eligible: ranked.length,
+    gender,
+    of: ranked.length,
     minMatchups: BOARD_MIN_MATCHUPS,
-    top: ranked.slice(0, limit).map(row),
-    // Keep true ranks on the bottom slice rather than renumbering from 1.
-    bottom: ranked.slice(-limit).map((u, i) => row(u, ranked.length - Math.min(limit, ranked.length) + i)).reverse(),
+    rows: ranked.slice(0, limit).map((u, i) => boardRow(u, i, ranked.length)),
+  };
+}
+
+// Which cohorts have anyone in them — so the UI renders a board per gender
+// actually present rather than assuming two.
+export function boardGenders(population) {
+  const seen = new Set(population.filter(boardEligible).map((u) => u.gender).filter(Boolean));
+  return ["woman", "man", "nonbinary"].filter((g) => seen.has(g));
+}
+
+// Where one person stands in their own cohort. Everyone who is not in the Top 10
+// still sees this, which is the whole point: a rank and a percentile for all.
+export function standingOf(user, population) {
+  if (!isParticipant(user)) return null;
+  const cohort = rankedCohort(population, user.gender);
+  const i = cohort.findIndex((u) => u.id === user.id);
+  if (i === -1) {
+    // Live photo, but not enough matchups yet to be placed.
+    return {
+      ranked: false,
+      gender: user.gender,
+      winRate: winRate(user),
+      matchups: user.matchups || 0,
+      minMatchups: BOARD_MIN_MATCHUPS,
+      toGo: Math.max(0, BOARD_MIN_MATCHUPS - (user.matchups || 0)),
+    };
+  }
+  return {
+    ranked: true,
+    gender: user.gender,
+    rank: i + 1,
+    of: cohort.length,
+    inTopTen: i < 10,
+    winRate: winRate(user),
+    wins: user.wins || 0,
+    losses: user.losses || 0,
+    matchups: user.matchups || 0,
+    // "Top 12.4%" — one decimal, because at this scale whole numbers lie.
+    percentile: cohort.length > 1 ? Math.round((((i + 1) / cohort.length) * 100) * 10) / 10 : 100,
+  };
+}
+
+// ---------- The four mirrors ----------
+// Every one of these is computed from votes already cast. No new collection.
+
+// Compatibility Gap: the average attractiveness percentile of the people you
+// pick, against the average percentile of the people who pick you. A wide gap
+// means you reach for people the platform's own ratings put above you.
+export function compatibilityGap(user, population) {
+  const mean = (xs) => (xs.length ? Math.round(xs.reduce((a, b) => a + b, 0) / xs.length) : null);
+
+  // Everyone you picked at least once.
+  const yourType = mean(
+    population
+      .filter((o) => o.id !== user.id && (user.ratings?.[o.id]?.w || 0) > 0)
+      .map((o) => percentile(o, population))
+  );
+  // Everyone who picked you at least once.
+  const yourFans = mean(
+    population
+      .filter((o) => o.id !== user.id && (o.ratings?.[user.id]?.w || 0) > 0)
+      .map((o) => percentile(o, population))
+  );
+
+  if (yourType == null || yourFans == null) return { yourType, yourFans, gap: null, verdict: null };
+  const gap = yourType - yourFans;
+  return { yourType, yourFans, gap, verdict: gapVerdict(gap) };
+}
+
+// Stated plainly, with no advice attached and no softening. The bars either
+// line up or they don't.
+function gapVerdict(gap) {
+  if (gap >= 25) return "you consistently reach well above your weight — they rarely look back";
+  if (gap >= 12) return "you aim higher than the people aiming at you";
+  if (gap <= -25) return "the people drawn to you rate far higher than the people you go for";
+  if (gap <= -12) return "you are wanted by people you don't go for";
+  return "your taste and your appeal are well matched";
+}
+
+// Self-Report vs. Reality: what you said about yourself on each axis, beside
+// what strangers guessed from the photo alone. Nothing is omitted.
+export function selfVsCrowd(user) {
+  return GAMES.map((game) => {
+    const consensus = guessConsensus(user, game);
+    const selfValue = axisValue(user, game.axis); // -1..1, or the nature score
+    // Normalize both onto 0..100 so the two columns are comparable at a glance.
+    const selfPct = game.axis === "moral"
+      ? Math.round(((selfValue / 72) + 1) / 2 * 100)
+      : Math.round(((selfValue + 1) / 2) * 100);
+    return {
+      key: game.key,
+      label: game.label,
+      emoji: game.emoji,
+      poles: game.poles,
+      self: selfPct,
+      answered: game.axis === "moral" ? (user.moralAnswered || 0) > 0 : hasAnswered(user, game.axis),
+      crowd: consensus.ready
+        ? { pct: consensus.pole === game.poles[1] ? consensus.pct : 100 - consensus.pct, pole: consensus.pole, total: consensus.total }
+        : null,
+      total: consensus.total,
+    };
+  });
+}
+const hasAnswered = (user, axis) => Object.values(user.traits || {}).length > 0 && (user.traits[axis] ?? null) !== null;
+
+// Reciprocity: of the distinct people you picked over someone else, how many
+// picked you back. Not a measure of attractiveness — a measure of whether who
+// you want and who wants you are the same people.
+export function reciprocity(user, population) {
+  const chosen = population.filter((o) => o.id !== user.id && likes(user, o.id));
+  const back = chosen.filter((o) => likes(o, user.id));
+  const rate = chosen.length ? back.length / chosen.length : null;
+  return {
+    chosen: chosen.length,
+    back: back.length,
+    rate: rate == null ? null : Math.round(rate * 100),
+    percentile: rate == null ? null : reciprocityPercentile(user, population, rate),
+  };
+}
+
+// Where that rate sits against everyone else who has chosen enough people for
+// their own rate to mean anything.
+function reciprocityPercentile(user, population, rate) {
+  const others = population
+    .filter((o) => o.id !== user.id)
+    .map((o) => {
+      const chosen = population.filter((x) => x.id !== o.id && likes(o, x.id));
+      if (chosen.length < 5) return null;
+      return chosen.filter((x) => likes(x, o.id)).length / chosen.length;
+    })
+    .filter((r) => r != null);
+  if (others.length < 3) return null;
+  return Math.round((others.filter((r) => r < rate).length / others.length) * 100);
+}
+
+// Morality vs. Attractiveness: one dot per qualifying user. No trend line, no
+// caption, no conclusion — the chart just sits there.
+export function moralityVsLooks(population, viewer) {
+  const qualifying = population.filter(
+    (u) => (u.moralAnswered || 0) >= MORAL_MIN_ANSWERED && (u.matchups || 0) >= BOARD_MIN_MATCHUPS
+  );
+  return {
+    minMatchups: BOARD_MIN_MATCHUPS,
+    points: qualifying.map((u) => ({
+      x: u.natureScore || 0,
+      y: percentile(u, population),
+      you: !!viewer && u.id === viewer.id,
+    })),
+    // Included so the viewer can find themselves even before the chart renders.
+    you: viewer && qualifying.some((u) => u.id === viewer.id)
+      ? { x: viewer.natureScore || 0, y: percentile(viewer, population) }
+      : null,
   };
 }
 

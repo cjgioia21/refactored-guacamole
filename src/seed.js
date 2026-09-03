@@ -9,7 +9,7 @@ import * as auth from "./auth.js";
 import * as legal from "./legal.js";
 import { QUESTIONS } from "./questions.js";
 import { MORAL_QUESTIONS } from "./morality.js";
-import { recordVote, attractedGenders, guessOutcome, GAMES, natureGap, mutualMatches, MIN_MUTUAL_PICKS, NATURE_WINDOW } from "./engine.js";
+import { recordVote, attractedGenders, guessOutcome, GAMES, topTen, BOARD_MIN_MATCHUPS } from "./engine.js";
 
 function answersFor(seed, bank = QUESTIONS) {
   const a = {};
@@ -121,29 +121,6 @@ if (store.all().length === 0) {
     recordVote(demo, appeal(demo, x) >= appeal(demo, y) ? x : y, appeal(demo, x) >= appeal(demo, y) ? y : x);
   }
 
-  // Guarantee a couple of real matches for the demo account: pick the closest
-  // Human Nature scores inside the window and have them pick each other enough
-  // times to clear MIN_MUTUAL_PICKS.
-  const filler = created.find((u) => u.id !== demo.id);
-  const partners = created
-    .filter((u) => u !== filler && natureGap(demo, u) <= NATURE_WINDOW)
-    .sort((a, b) => natureGap(demo, a) - natureGap(demo, b))
-    .slice(0, 2);
-  for (const p of partners) {
-    // Enough wins to clear the losses the random rounds already handed out,
-    // plus the pick minimum — otherwise likes() stays false and no match forms.
-    const need = (a, b) => (a.ratings?.[b.id]?.l || 0) + MIN_MUTUAL_PICKS + 1;
-    for (let i = 0, n = need(demo, p); i < n; i++) recordVote(demo, p, filler);
-    for (let i = 0, n = need(p, demo); i < n; i++) recordVote(p, demo, filler);
-  }
-
-  // Opt most of the demo pool onto the boards so the feature is visible with
-  // seeded data. Real accounts are opt-out by default and always will be — this
-  // is demo data agreeing on behalf of nobody.
-  for (const u of created) {
-    if ((u.matchups || 0) >= 50) store.setBoardOptIn(u.id, true, "1.0");
-  }
-
   // Strangers guess about photos (populates "what strangers guess about you").
   for (let g = 0; g < 600; g++) {
     const target = pool[rnd(pool.length)];
@@ -155,8 +132,8 @@ if (store.all().length === 0) {
   }
 
   store.save();
-  const demoMatches = mutualMatches(demo, pool).length;
-  console.log(`Seeded ${pool.length} approved profiles (incl. demo@truehumannature.com / hunter2), matchups + guesses; demo has ${demoMatches} match(es).`);
+  const ranked = topTen(pool, "woman").of + topTen(pool, "man").of;
+  console.log(`Seeded ${pool.length} approved profiles (incl. demo@truehumannature.com / hunter2); ${ranked} clear the ${BOARD_MIN_MATCHUPS}-matchup floor for the Top 10.`);
 } else {
   console.log(`Store already has ${store.all().length} profiles; skipping seed.`);
 }

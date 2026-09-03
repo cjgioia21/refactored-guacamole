@@ -51,8 +51,21 @@
     <main>
       <!-- Onboarding: Add your photo -->
       <section id="view-onboard" class="view">
-        <h2>Add your photo 🖼️</h2>
-        <p class="sub">Put your own face into the game — and find out how people read it.</p>
+        <h2>Get started</h2>
+        <p class="sub">Rate other people, or put your own face in and find out how they read it.</p>
+        <div id="role-fork" class="card role-fork" hidden>
+          <h3>Two ways to use this</h3>
+          <div class="role-options">
+            <button type="button" class="role-option" data-role="voter">
+              <b>Just vote</b>
+              <span>Rate other people. No photo, no ID, nobody rates you. You can switch later.</span>
+            </button>
+            <button type="button" class="role-option" data-role="participant">
+              <b>Put my face in</b>
+              <span>Upload a photo and get rated. Reviewed by a human before anyone sees it. 18+ only.</span>
+            </button>
+          </div>
+        </div>
         <div id="photo-status" hidden></div>
         <form id="onboard-form">
           <div class="card">
@@ -60,7 +73,7 @@
             <p class="sub" style="margin:0">Real people rate your photo. Your report shows how you're read at a glance: how attractive strangers find you, and what they guess about you.</p>
           </div>
 
-          <div class="card">
+          <div class="card" id="reqs-card">
             <h3>Photo requirements</h3>
             <ul class="reqs">
               <li><b>Upright and framed like a portrait</b> — head-and-shoulders, face clear, not sideways.</li>
@@ -72,7 +85,7 @@
             </ul>
           </div>
 
-          <div class="card">
+          <div class="card" id="photo-card">
             <h3>Your photo</h3>
             <input type="file" id="photo-file" accept="image/*" hidden />
             <button type="button" class="choose-photo" id="choose-photo">choose a photo…</button>
@@ -81,14 +94,23 @@
             <input name="photo" id="photo-url" placeholder="https://…" hidden style="margin-top:8px" />
           </div>
 
-          <div class="card">
+          <div class="card" id="id-card" hidden>
+            <h3>🪪 Age check</h3>
+            <p class="sub" style="margin:0 0 10px">A reviewer wasn't certain about your age. Send a photo of <b>yourself holding your government ID next to your face</b>, with both clearly readable.</p>
+            <p class="sub" style="margin:0 0 10px">We look at it, make a decision, and <b>delete it</b>. We keep only a note that your age was checked — never the document, the number, or your date of birth.</p>
+            <input type="file" id="id-file" accept="image/*" hidden />
+            <button type="button" class="choose-photo" id="choose-id">choose your ID photo…</button>
+            <div id="id-preview" hidden></div>
+          </div>
+
+          <div class="card" id="pred-card">
             <h3>Your prediction</h3>
             <p class="sub" style="margin:0 0 10px">How attractive do you think people will rate this photo?</p>
             <input type="range" name="prediction" id="prediction" min="0" max="100" value="50" />
             <div class="pred-readout" id="pred-readout">move the slider to set your prediction</div>
           </div>
 
-          <div class="card">
+          <div class="card" id="ratings-from-card">
             <h3>Ratings from</h3>
             <p class="sub" style="margin:0 0 10px">Who are you most interested in getting ratings from?</p>
             <div class="radios" id="ratings-from">
@@ -105,7 +127,7 @@
             </label>
             <label class="check-inline" style="margin-top:8px">
               <input type="checkbox" name="shareName" />
-              Show my name to people I match with
+              Show my name on my profile and the Top 10
             </label>
             <label style="margin-top:12px">Gender
               <select name="gender">
@@ -120,14 +142,23 @@
             <div class="row3" style="margin-top:12px">
               <label>Age <input name="age" type="number" min="18" max="99" /></label>
               <label>Orientation<select name="orientation"><option value="straight">straight</option><option value="gay">gay</option><option value="lesbian">lesbian</option><option value="bi">bi</option></select></label>
-              <label>Instagram <input name="instagram" placeholder="@handle" /></label>
             </div>
             <fieldset style="margin-top:12px"><legend>Mental health <span class="hint">optional, private</span></legend><div id="mh" class="opts"></div></fieldset>
           </div>
 
+          <div class="card" id="socials-card">
+            <h3>Link your socials <span class="hint">— optional</span></h3>
+            <p class="sub" style="margin:0 0 10px">If you link an account it's shown on your profile and on the <b>Top 10</b> if you make it. Leave them blank and nothing is shown. They are never displayed while someone is rating you.</p>
+            <div class="row3">
+              <label>Instagram <input name="instagram" placeholder="@handle" /></label>
+              <label>TikTok <input name="tiktok" placeholder="@handle" /></label>
+              <label>X / Twitter <input name="twitter" placeholder="@handle" /></label>
+            </div>
+          </div>
+
           <div id="questions"></div>
 
-          <div class="card">
+          <div class="card" id="confirms-card">
             <h3>Confirmations</h3>
             <div class="checks" id="confirms">
               <label><input type="checkbox" data-confirm /> I understand other people will see this image and may see how it's ranked.</label>
@@ -160,8 +191,7 @@
           <div class="mini-tiles">
             <button class="mini-tile" data-view="moral"><b>Morality quiz <span id="moral-badge" class="badge" hidden>!</span></b><span id="moral-meta">get your score →</span></button>
             <button class="mini-tile" data-view="report"><b>Your report</b><span>how you're seen →</span></button>
-            <button class="mini-tile" data-view="matches"><b>Matches <span id="match-badge" class="badge" hidden>0</span></b><span>socials unlock →</span></button>
-            <button class="mini-tile" data-view="boards"><b>The boards</b><span id="board-meta">best and worst →</span></button>
+            <button class="mini-tile" data-view="boards"><b>Top 10</b><span id="standing-meta">where you rank →</span></button>
             <button class="mini-tile" data-view="buy"><b>Buy credits</b><span>more data, faster →</span></button>
             <button class="mini-tile" id="edit-profile"><b>Your photo</b><span id="photo-meta">manage →</span></button>
             <button class="mini-tile" data-view="admin" id="admin-tile" hidden><b>Photo review</b><span id="admin-meta">approve photos →</span></button>
@@ -194,14 +224,6 @@
         <p class="privacy-note">🔒 Your photo is stored privately and shown only inside the rating games. Your answers are never shown to anyone — they only power your report.</p>
       </section>
 
-      <!-- Matches -->
-      <section id="view-matches" class="view">
-        <button class="back" data-view="home">← home</button>
-        <h2>Matches</h2>
-        <p class="sub">You both rated each other over other people. Their socials are revealed below.</p>
-        <div id="matches-list" class="cards"></div>
-      </section>
-
       <!-- Buy credits -->
       <section id="view-buy" class="view">
         <button class="back" data-view="home">← home</button>
@@ -216,8 +238,9 @@
       <!-- Public boards -->
       <section id="view-boards" class="view">
         <button class="back" data-view="home">← home</button>
-        <h1 class="display-title">The<br><b>boards</b></h1>
-        <div id="board-status"></div>
+        <h1 class="display-title">The<br><b>Top 10</b></h1>
+        <p class="sub">The ten most-chosen faces of each gender, by the share of head-to-head matchups they win. Everyone else can see exactly where they stand.</p>
+        <div id="board-standing"></div>
         <div id="boards"></div>
       </section>
 
@@ -242,8 +265,13 @@
       <!-- Admin: photo approval queue -->
       <section id="view-admin" class="view">
         <button class="back" data-view="home">← home</button>
-        <h2>Photo review</h2>
-        <p class="sub">Nothing goes live until you approve it. <b>Escalate</b> rejects the photo and locks the account so they can't re-upload.</p>
+        <div class="admin-tabs">
+          <button class="active" data-admin="queue">Photos</button>
+          <button data-admin="reports">Reports <span id="report-badge" class="badge" hidden>0</span></button>
+        </div>
+        <div id="admin-reports" hidden></div>
+        <h2 id="admin-queue-title">Photo review</h2>
+        <p class="sub" id="admin-queue-sub">Nothing goes live until you approve it. <b>Escalate</b> rejects the photo and locks the account so they can't re-upload.</p>
         <div id="admin-queue"></div>
       </section>
 
@@ -259,9 +287,32 @@
       <button data-view="home" class="active">Home</button>
       <button data-view="matchup">Rate</button>
       <button data-view="report">Report</button>
-      <button data-view="matches">Matches</button>
+      <button data-view="boards">Top 10</button>
       <button data-view="admin" id="tab-admin" hidden>Review</button>
     </nav>
+  </div>
+
+  <div id="report-modal" hidden>
+    <div class="legal-sheet">
+      <header class="legal-head">
+        <b>Report this photo</b>
+        <button class="legal-close" id="report-close" aria-label="close">×</button>
+      </header>
+      <div class="legal-body">
+        <p class="sub">Tell us what's wrong. Reports about a minor, or about your own photo being uploaded by someone else, take the photo down straight away.</p>
+        <div id="report-reasons" class="opts"></div>
+        <label style="margin-top:12px">Anything else we should know <span class="hint">optional</span>
+          <textarea id="report-detail" rows="3" maxlength="1000"></textarea>
+        </label>
+        <label style="margin-top:10px">Your email <span class="hint">optional — so we can tell you the outcome</span>
+          <input id="report-contact" type="email" />
+        </label>
+        <p class="report-result" id="report-result" hidden></p>
+      </div>
+      <footer class="legal-foot">
+        <button class="danger" id="report-send" disabled>Send report</button>
+      </footer>
+    </div>
   </div>
 
   <div id="legal-modal" hidden>
@@ -279,8 +330,7 @@
 
   <p class="footer-legal">
     <a class="link" data-legal="terms">Terms</a> ·
-    <a class="link" data-legal="privacy">Privacy</a> ·
-    <a class="link" data-legal="board">Leaderboard Terms</a>
+    <a class="link" data-legal="privacy">Privacy</a>
   </p>
 
   <script src="app.js"></script>

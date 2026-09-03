@@ -4,12 +4,13 @@ import { profileFromAnswers, QUESTIONS, AXES } from "../src/questions.js";
 import { MORAL_QUESTIONS, moralScore, moralAnswered, moralVerdict, moralBreakdown, worstVice, MORAL_MIN_ANSWERED } from "../src/morality.js";
 import { similarity, emptyAcc } from "../src/vectors.js";
 import {
-  updateElo, recordVote, percentile, matchScore, findMatches, guessOutcome,
-  report, typeSummary, attractedGenders, likes, mutualMatches, pickRate,
+  updateElo, recordVote, percentile, guessOutcome,
+  report, typeSummary, attractedGenders, likes, pickRate,
   attractivenessBand, guessConsensus, fansReport, tasteReport, GAMES, TASTES, BASE_ELO, REVEAL_MIN,
-  canMatch, matchGates, nearMatches, NATURE_WINDOW, MIN_MUTUAL_PICKS, MORAL_MIN, quizDone, axisValue,
-  winRate, rankOf, rejectedBy, chosenBy, predictionDelta, deathReport, cheatReport,
-  leaderboard, boardEligible, BOARD_MIN_MATCHUPS,
+  axisValue, winRate, rankOf, rejectedBy, chosenBy, abandonedBy, predictionDelta,
+  deathReport, cheatReport, topTen, standingOf, rankedCohort, boardGenders,
+  boardEligible, isParticipant, BOARD_MIN_MATCHUPS,
+  compatibilityGap, reciprocity, selfVsCrowd, moralityVsLooks,
 } from "../src/engine.js";
 
 // Answer every morality question at the same signed value: -2 (saint) .. +2.
@@ -95,29 +96,6 @@ test("percentile ranks higher elo above lower", () => {
   assert.ok(percentile(pop[2], pop) > percentile(pop[0], pop));
 });
 
-test("matchScore is symmetric, bounded, and orientation-gated", () => {
-  const a = mkUser("a", answersAll(0.5), { gender: "man", orientation: "straight" });
-  const b = mkUser("b", answersAll(0.4), { gender: "woman", orientation: "straight" });
-  const c = mkUser("c", answersAll(0.4), { gender: "man", orientation: "straight" });
-  const pop = [a, b, c];
-  const ab = matchScore(a, b, pop);
-  assert.equal(ab.score, matchScore(b, a, pop).score);
-  assert.ok(ab.score >= 0 && ab.score <= 100);
-  // straight man ↔ straight man: near-zero mutual attraction
-  assert.ok(matchScore(a, c, pop).score < ab.score);
-});
-
-test("findMatches excludes self and sorts descending", () => {
-  const pop = [
-    mkUser("a", answersAll(1), { gender: "man", orientation: "straight" }),
-    mkUser("b", answersAll(0.9), { gender: "woman", orientation: "straight" }),
-    mkUser("c", answersAll(-1), { gender: "woman", orientation: "straight" }),
-  ];
-  const m = findMatches(pop[0], pop);
-  assert.ok(!m.some((x) => x.user.id === "a"));
-  for (let i = 1; i < m.length; i++) assert.ok(m[i - 1].score >= m[i].score);
-});
-
 test("guessOutcome scores trait, age, gender and mental-health", () => {
   const t = mkUser("t", answersAll(1), { age: 40, gender: "woman", mentalHealth: ["bipolar"] });
   assert.equal(guessOutcome(t, "pol", "high").correct, true);
@@ -142,45 +120,6 @@ test("likes reflects rating someone over others; pickRate is a fraction", () => 
   assert.equal(likes(a, "b"), true);
   assert.equal(likes(a, "c"), false);
   assert.equal(pickRate(a, "b"), 1);
-});
-
-test("mutualMatches requires both to rate each other over others, 3 times each", () => {
-  const a = mkUser("a"), b = mkUser("b"), c = mkUser("c");
-  for (let i = 0; i < 3; i++) recordVote(a, b, c); // a likes b (not yet mutual)
-  assert.equal(mutualMatches(a, [a, b, c]).length, 0);
-  for (let i = 0; i < MIN_MUTUAL_PICKS - 1; i++) recordVote(b, a, c);
-  assert.equal(mutualMatches(a, [a, b, c]).length, 0); // mutual, but short of 3 picks
-  recordVote(b, a, c); // third pick clears the gate
-  const m = mutualMatches(a, [a, b, c]);
-  assert.equal(m.length, 1);
-  assert.equal(m[0].user.id, "b");
-  assert.ok(m[0].youPickRate > 0 && m[0].theyPickRate > 0);
-  assert.equal(m[0].natureGap, 0);
-});
-
-test("a Human Nature gap wider than the window blocks an otherwise-mutual match", () => {
-  const a = mkUser("a", answersAll(1), { moralAnswers: moralAll(2) });
-  const b = mkUser("b", answersAll(-1), { moralAnswers: moralAll(-2) });
-  const c = mkUser("c");
-  assert.ok(Math.abs(a.natureScore - b.natureScore) > NATURE_WINDOW);
-  for (let i = 0; i < 3; i++) { recordVote(a, b, c); recordVote(b, a, c); }
-  assert.equal(canMatch(a, b), false);
-  const gates = matchGates(a, b);
-  assert.equal(gates.mutual, true);
-  assert.equal(gates.picks, true);
-  assert.equal(gates.nature, false);
-  // ...and it surfaces as an "almost" so the user knows why.
-  const near = nearMatches(a, [a, b, c]);
-  assert.equal(near.length, 1);
-  assert.equal(near[0].blockedBy, "nature");
-});
-
-test("canMatch clears once picks, the nature window and the quiz are all satisfied", () => {
-  const a = mkUser("a", answersAll(0.5)), b = mkUser("b", answersAll(0.5)), c = mkUser("c");
-  assert.equal(canMatch(a, b), false);
-  for (let i = 0; i < MIN_MUTUAL_PICKS; i++) { recordVote(a, b, c); recordVote(b, a, c); }
-  assert.equal(matchGates(a, b).natureGap, 0);
-  assert.equal(canMatch(a, b), true);
 });
 
 test("attractivenessBand narrows with more matchups", () => {
@@ -234,22 +173,24 @@ test("guessConsensus needs a minimum before it is ready", () => {
   assert.ok(c.pct >= 50);
 });
 
-test("report exposes percentile, yourType, mutual matches and crushes", () => {
+test("report carries the stats and the four mirrors, and nothing about matching", () => {
   const a = mkUser("a", answersAll(0.6), { gender: "man" });
   const b = mkUser("b", answersAll(0.5), { gender: "woman" });
   const c = mkUser("c", answersAll(-0.6), { gender: "woman" });
   const pop = [a, b, c];
-  for (let i = 0; i < 3; i++) recordVote(a, b, c); // a likes b, not mutual yet
-  let r = report(a, pop);
-  assert.equal(r.matches.length, 0);
-  assert.equal(r.crushes, 1); // liked b, not matched back
-  for (let i = 0; i < 3; i++) recordVote(b, a, c); // mutual and past the pick gate
-  r = report(a, pop);
-  assert.equal(r.matches.length, 1);
-  assert.equal(r.matches[0].id, "b");
+  for (let i = 0; i < 3; i++) recordVote(a, b, c);
+  for (let i = 0; i < 3; i++) recordVote(b, a, c);
+  const r = report(a, pop);
+
   assert.ok(Array.isArray(r.likedBy) && typeof r.yourType.text === "string");
   assert.ok(r.attractivenessPercentile >= 0 && r.attractivenessPercentile <= 100);
   assert.equal(typeof r.natureScore, "number");
+  // The four mirrors are present...
+  assert.ok(r.compatibilityGap && Array.isArray(r.selfVsCrowd) && r.reciprocity);
+  // ...and every trace of the dating layer is gone.
+  for (const gone of ["matches", "crushes", "almost", "suggestions"]) {
+    assert.equal(r[gone], undefined, `report should no longer carry ${gone}`);
+  }
 });
 
 test("moralScore spans -72..+72 and the verdict bands track it", () => {
@@ -274,33 +215,6 @@ test("moralBreakdown splits the score across all six vices", () => {
   assert.equal(worstVice(moralAll(2)).answered, 6);
 });
 
-test("skipping the morality quiz blocks a match no matter how much you pick each other", () => {
-  const a = mkUser("a", undefined, { moralAnswers: {} });
-  const b = mkUser("b", undefined, { moralAnswers: {} });
-  const c = mkUser("c");
-  assert.equal(quizDone(a), false);
-  assert.equal(a.natureScore, b.natureScore); // both 0 — would match without the gate
-  for (let i = 0; i < 5; i++) { recordVote(a, b, c); recordVote(b, a, c); }
-  const gates = matchGates(a, b);
-  assert.equal(gates.mutual, true);
-  assert.equal(gates.picks, true);
-  assert.equal(gates.nature, true);
-  assert.equal(gates.quiz, false);
-  assert.equal(canMatch(a, b), false);
-  assert.equal(nearMatches(a, [a, b, c])[0].blockedBy, "your-quiz");
-});
-
-test("a partly-finished quiz still counts once it passes the minimum", () => {
-  const partial = {};
-  MORAL_QUESTIONS.slice(0, MORAL_MIN_ANSWERED).forEach((q) => { partial[q.id] = 2; });
-  const u = mkUser("p", undefined, { moralAnswers: partial });
-  assert.equal(moralAnswered(partial), MORAL_MIN_ANSWERED);
-  assert.equal(quizDone(u), true);
-  const oneShort = { ...partial };
-  delete oneShort[MORAL_QUESTIONS[0].id];
-  assert.equal(quizDone(mkUser("q", undefined, { moralAnswers: oneShort })), false);
-});
-
 test("the morality guessing axis reads the Human Nature score, not the trait vector", () => {
   const evil = mkUser("e", answersAll(0), { moralAnswers: moralAll(2) });
   const saint = mkUser("s", answersAll(0), { moralAnswers: moralAll(-2) });
@@ -309,18 +223,6 @@ test("the morality guessing axis reads the Human Nature score, not the trait vec
   assert.equal(guessOutcome(evil, "moral", "high").correct, true);
   assert.equal(guessOutcome(saint, "moral", "high").correct, false);
   assert.equal(guessOutcome(saint, "moral", "low").actualLabel, "the better person");
-});
-
-test("the pool is anonymous: names never leave the profile except to a match", () => {
-  const a = mkUser("a", answersAll(0)), b = mkUser("b", answersAll(0)), c = mkUser("c");
-  a.name = "Alex"; b.name = "Bella"; b.shareName = true;
-  const cShy = c; cShy.name = "Cara"; cShy.shareName = false;
-  for (let i = 0; i < MIN_MUTUAL_PICKS; i++) { recordVote(a, b, c); recordVote(b, a, c); }
-  const r = report(a, [a, b, c]);
-  assert.equal(r.name, undefined); // the report itself carries no name
-  assert.equal(r.matches[0].name, "Bella"); // shared
-  b.shareName = false;
-  assert.equal(report(a, [a, b, c]).matches[0].name, null); // withdrawn
 });
 
 test("recordVote tracks raw wins and losses, and winRate reports them plainly", () => {
@@ -352,6 +254,22 @@ test("rejectedBy counts distinct people, not votes", () => {
   assert.equal(chosenBy(target, pop), 1);
 });
 
+test("abandonedBy counts only the people who picked you and then changed their mind", () => {
+  const target = mkUser("t"), other = mkUser("o");
+  const loyal = mkUser("loyal"), never = mkUser("never"), fickle = mkUser("fickle");
+  recordVote(loyal, target, other); // always picks the target
+  recordVote(loyal, target, other);
+  recordVote(never, other, target); // never picks the target
+  recordVote(fickle, target, other); // picked them once...
+  recordVote(fickle, other, target); // ...then picked someone else
+  const pop = [target, other, loyal, never, fickle];
+
+  assert.equal(abandonedBy(target, pop), 1); // only the fickle one counts
+  assert.equal(rejectedBy(target, pop), 2); // never + fickle both passed at least once
+  assert.equal(chosenBy(target, pop), 2); // loyal + fickle both picked at least once
+  assert.equal(abandonedBy(loyal, pop), 0); // nobody has rated the voter at all
+});
+
 test("predictionDelta exposes how wrong you were about yourself", () => {
   const pop = [mkUser("a"), mkUser("b"), mkUser("c"), mkUser("d")];
   pop.forEach((u, i) => { u.elo = 1000 + i * 100; u.matchups = 10; u.prediction = 90; });
@@ -372,24 +290,131 @@ test("dilemma reports only speak once there is something to say", () => {
   assert.equal(cheatReport(u).yesPct, 40);
 });
 
-test("the boards are opt-in, gated on real data, and empty by default", () => {
-  const pop = [mkUser("a"), mkUser("b"), mkUser("c")];
-  pop.forEach((u, i) => { u.elo = 1000 + i * 100; u.matchups = 100; u.photoStatus = "approved"; });
-  assert.equal(leaderboard(pop).eligible, 0); // nobody opted in
 
-  pop.forEach((u) => { u.boardOptIn = true; });
-  const board = leaderboard(pop);
-  assert.equal(board.eligible, 3);
-  assert.equal(board.top[0].id, "c"); // highest elo
-  assert.equal(board.bottom[0].id, "a"); // lowest
-  assert.equal(board.bottom[0].rank, 3); // true rank, not renumbered
+// ---- The Top 10 ----
 
-  // Too few matchups: opted in, but not exposed on a "worst rated" list yet.
-  pop[0].matchups = BOARD_MIN_MATCHUPS - 1;
-  assert.equal(boardEligible(pop[0]), false);
-  assert.equal(leaderboard(pop).eligible, 2);
+// A participant with a live photo and a known W/L record.
+const mkPlayer = (id, gender, wins, losses, extra = {}) =>
+  mkUser(id, undefined, { gender, wins, losses, matchups: wins + losses, photoStatus: "approved", ...extra });
 
-  // An unapproved photo never appears, opt-in or not.
-  pop[1].photoStatus = "pending";
-  assert.equal(boardEligible(pop[1]), false);
+test("topTen ranks strictly by win percentage, per gender", () => {
+  const pop = [
+    mkPlayer("w1", "woman", 90, 10),  // 90%
+    mkPlayer("w2", "woman", 70, 30),  // 70%
+    mkPlayer("w3", "woman", 51, 49),  // 51%
+    mkPlayer("m1", "man", 80, 20),    // 80%
+  ];
+  const women = topTen(pop, "woman");
+  assert.deepEqual(women.rows.map((r) => r.id), ["w1", "w2", "w3"]);
+  assert.deepEqual(women.rows.map((r) => r.winRate), [90, 70, 51]);
+  assert.equal(women.of, 3);
+  // Elo plays no part: a lower-Elo player with a better win rate still leads.
+  pop[2].elo = 9999;
+  assert.equal(topTen(pop, "woman").rows[0].id, "w1");
+  // Boards are per gender.
+  assert.deepEqual(topTen(pop, "man").rows.map((r) => r.id), ["m1"]);
+  assert.deepEqual(boardGenders(pop), ["woman", "man"]);
+});
+
+test("the matchup floor keeps a 2-0 record off the board", () => {
+  const pop = [mkPlayer("real", "woman", 60, 40), mkPlayer("fluke", "woman", 2, 0)];
+  assert.equal(winRate(pop[1]), 100); // undeniably 100%...
+  assert.equal(boardEligible(pop[1]), false); // ...and correctly not ranked
+  assert.deepEqual(topTen(pop, "woman").rows.map((r) => r.id), ["real"]);
+});
+
+test("ties on win rate break toward the bigger sample", () => {
+  const pop = [mkPlayer("few", "woman", 30, 20), mkPlayer("many", "woman", 240, 160)]; // both 60%
+  assert.deepEqual(topTen(pop, "woman").rows.map((r) => r.id), ["many", "few"]);
+});
+
+test("voters are never ranked; participants always get a standing", () => {
+  const voter = mkUser("v", undefined, { gender: "woman", photoStatus: "pending", matchups: 0 });
+  assert.equal(isParticipant(voter), false);
+  assert.equal(standingOf(voter, [voter]), null);
+
+  const pop = [mkPlayer("a", "woman", 90, 10), mkPlayer("b", "woman", 50, 50), mkPlayer("c", "woman", 10, 90)];
+  const last = standingOf(pop[2], pop);
+  assert.equal(last.ranked, true);
+  assert.equal(last.rank, 3);
+  assert.equal(last.of, 3);
+  assert.equal(last.winRate, 10);
+  assert.equal(last.percentile, 100); // bottom of three
+  assert.equal(standingOf(pop[0], pop).percentile, 33.3); // "Top 33.3%"
+  assert.equal(standingOf(pop[0], pop).inTopTen, true);
+});
+
+test("a participant under the floor is told how many matchups they still need", () => {
+  const almost = mkPlayer("x", "man", 20, 10); // 30 matchups
+  const s = standingOf(almost, [almost]);
+  assert.equal(s.ranked, false);
+  assert.equal(s.toGo, BOARD_MIN_MATCHUPS - 30);
+});
+
+// ---- The four mirrors ----
+
+test("compatibilityGap compares who you pick against who picks you", () => {
+  // A hot target, a cold one, and a viewer who only ever picks the hot one.
+  const hot = mkPlayer("hot", "woman", 90, 10, { elo: 1600 });
+  const cold = mkPlayer("cold", "woman", 10, 90, { elo: 1000 });
+  const me = mkPlayer("me", "man", 20, 80, { elo: 1100 });
+  const pop = [hot, cold, me];
+
+  recordVote(me, hot, cold); // I reach for the hot one
+  recordVote(cold, me, hot); // the cold one reaches for me
+
+  const g = compatibilityGap(me, pop);
+  assert.equal(g.yourType, percentile(hot, pop));
+  assert.equal(g.yourFans, percentile(cold, pop));
+  assert.ok(g.gap > 0, "reaching above your weight is a positive gap");
+  assert.match(g.verdict, /reach|higher/);
+
+  // Nobody picked and nobody picking -> no verdict rather than a fake one.
+  const lonely = mkPlayer("lonely", "man", 0, 0);
+  assert.equal(compatibilityGap(lonely, [lonely]).gap, null);
+});
+
+test("reciprocity counts distinct people both ways", () => {
+  const me = mkUser("me");
+  const back1 = mkUser("b1"), back2 = mkUser("b2"), nope = mkUser("n"), other = mkUser("o");
+  const pop = [me, back1, back2, nope, other];
+
+  for (const t of [back1, back2, nope]) recordVote(me, t, other); // I chose three
+  recordVote(back1, me, other); // two chose me back
+  recordVote(back2, me, other);
+
+  const r = reciprocity(me, pop);
+  assert.equal(r.chosen, 3);
+  assert.equal(r.back, 2);
+  assert.equal(r.rate, 67);
+
+  assert.equal(reciprocity(mkUser("never"), pop).rate, null); // chose nobody
+});
+
+test("selfVsCrowd returns every axis, with crowd null until there is consensus", () => {
+  const u = mkUser("u", answersAll(0.5));
+  const rows = selfVsCrowd(u);
+  assert.equal(rows.length, GAMES.length); // nothing omitted
+  assert.ok(rows.every((r) => typeof r.self === "number" && r.self >= 0 && r.self <= 100));
+  assert.ok(rows.every((r) => r.crowd === null)); // no guesses received yet
+
+  const game = GAMES[0];
+  u.guessesReceived[game.axis] = { low: 1, high: REVEAL_MIN + 4 };
+  const withCrowd = selfVsCrowd(u).find((r) => r.key === game.key);
+  assert.ok(withCrowd.crowd && withCrowd.crowd.pct >= 50);
+});
+
+test("the scatter only plots people with a finished quiz and enough matchups", () => {
+  const ok1 = mkPlayer("ok1", "woman", 60, 40, { moralAnswered: 36, natureScore: 20 });
+  const ok2 = mkPlayer("ok2", "man", 40, 60, { moralAnswered: 36, natureScore: -30 });
+  const noQuiz = mkPlayer("nq", "man", 60, 40, { moralAnswered: 0 });
+  const tooFew = mkPlayer("tf", "man", 3, 2, { moralAnswered: 36 });
+  const pop = [ok1, ok2, noQuiz, tooFew];
+
+  const d = moralityVsLooks(pop, ok1);
+  assert.equal(d.points.length, 2);
+  assert.equal(d.points.filter((p) => p.you).length, 1);
+  assert.ok(d.points.every((p) => p.x >= -72 && p.x <= 72 && p.y >= 0 && p.y <= 100));
+  // Dots carry coordinates only — no ids leave the server.
+  assert.deepEqual(Object.keys(d.points[0]).sort(), ["x", "y", "you"]);
 });

@@ -1,6 +1,6 @@
 # Terms of Service
 
-**Version 1.0 — effective [EFFECTIVE_DATE]**
+**Version 1.1 — effective [EFFECTIVE_DATE]**
 
 TrueHumanNature is operated by [LEGAL_ENTITY] ("we", "us"), located in
 [PROVINCE], Canada. Contact: [CONTACT_EMAIL].
@@ -28,8 +28,12 @@ because you dislike your result.** If being judged harshly by anonymous stranger
 would distress you, do not create an account.
 
 You also complete a questionnaire covering political views, sexual history and
-attitudes, and optionally mental health. This produces a "Human Nature score"
-that we use to decide who you are allowed to match with.
+attitudes, and optionally mental health. This produces a "Human Nature score",
+which we show back to you alongside what strangers guessed about you.
+
+**This is not a dating service.** We do not match you with anyone and we do not
+introduce you to anyone. If you want people to be able to find you, you can link
+your own social accounts to your profile — that is entirely up to you.
 
 ## 2. You must be 18 or older
 
@@ -49,7 +53,7 @@ reports ahead of everything else.
 - One account per person. Don't share it, sell it, or transfer it.
 - Give us a working email address. It is how we reach you about your account.
 - You are responsible for what happens under your account.
-- You may close your account at any time (see section 10).
+- You may close your account at any time (see section 11).
 
 ## 4. Photographs — the rules
 
@@ -106,15 +110,19 @@ You keep ownership of your photograph. Delete it and the licence ends.
   questionnaire answers.
 - **Your questionnaire answers are never shown to anyone**, ever, in identifiable
   form. They feed your scores and anonymous aggregate statistics only.
-- **Your name and social media handles are private by default.** They are shown
-  only to people you mutually match with, and your name only if you switch that
-  on yourself.
+- **Linking your social accounts is optional and entirely your choice.** If you
+  link them they are shown on your participant profile and on the Top 10 to
+  other signed-in users. If you link nothing, nothing is shown. Your name stays
+  private unless you switch it on yourself.
 - **Our reviewers see your photograph, your name, your age and your gender**,
   because they need that to review the photograph. We are telling you this
   rather than leaving it out.
-- **The public boards are opt-in and separate.** You do not appear on any
-  leaderboard unless you separately agree to the Leaderboard Terms. See
-  section 9.
+- **The Top 10 is public within the site, and there is no opt-out.** If your
+  photo is one of the ten most-chosen of your gender, it appears on the
+  leaderboard along with your win rate and any social accounts you linked.
+  **By putting your face into the rating pool you are agreeing to this.** If you
+  do not want to be ranked publicly, do not upload a photo — you can still use
+  the whole site as a voter.
 
 ## 7. How you must behave
 
@@ -150,18 +158,38 @@ We rate-limit and log photograph access, and we terminate accounts for it.
   and any recurring charge can be cancelled in the same number of steps it took
   to start.
 
-## 9. The public boards
+## 9. Voters and participants
 
-The winner and loser boards are **entirely optional and off by default**. They
-have their own agreement (Leaderboard Terms), which you must accept separately
-and explicitly.
+There are two ways to use TrueHumanNature.
 
-You can remove yourself instantly at any time, and refusing has no effect on
-anything else you can do here.
+**Voters** create an account and rate other people. You do not need to upload a
+photo, and you are never rated yourself. You must be signed in to vote, so that
+we can detect duplicate accounts and vote manipulation.
 
-Do not agree to that one casually. Read it.
+**Participants** upload a photo of their own face and go into the rating pool.
+To become one you must confirm you are 18 or over, and your photo must be
+approved by a human reviewer before anyone sees it.
 
-## 10. Ending it
+**If a reviewer is not confident about your age, we will ask you for
+identification** — a photo of you holding a government-issued ID next to your
+face. We look at it, decide, and then **delete it**. We keep only a record that
+your age was checked. We do not store the document, the number on it, or your
+date of birth. If you would rather not do this, you can withdraw your photo and
+carry on as a voter.
+
+## 10. The Top 10
+
+The leaderboard shows the ten participants of each gender with the highest
+share of head-to-head matchups won. It is visible to everyone signed in to the
+site. It is not published on the open web and is not indexed by search engines.
+
+**There is no opt-out.** Ranking is what the site does, and being ranked
+publicly if you place in the top ten is part of what you agree to by uploading
+a photo. Everyone else can see their own position and percentile privately.
+
+You can leave at any time by deleting your photo or your account.
+
+## 11. Ending it
 
 **You** can delete your account at any time from your settings, or by emailing
 [CONTACT_EMAIL]. When you do, we delete your photograph and your personal
@@ -171,7 +199,7 @@ information as described in the Privacy Policy.
 believe you are under 18, if you upload prohibited material, or if we stop
 operating the service. Where we reasonably can, we will tell you why.
 
-## 11. Reporting something
+## 12. Reporting something
 
 Email [CONTACT_EMAIL]. Tell us what you saw and where.
 
@@ -182,7 +210,7 @@ Email [CONTACT_EMAIL]. Tell us what you saw and where.
   report, and you do not need an account to make one.
 - **Anything else** — we aim to respond within **5 business days**.
 
-## 12. The service is provided as-is
+## 13. The service is provided as-is
 
 We try to keep TrueHumanNature working, accurate, and available. We don't
 promise that it will be. It is provided **"as is"**, without warranties of any
@@ -198,7 +226,7 @@ Nothing here excludes liability that cannot legally be excluded — including fo
 fraud, or for death or personal injury caused by negligence. Your statutory
 consumer rights under Canadian law are not affected by anything in this section.
 
-## 13. Limit on what we owe you
+## 14. Limit on what we owe you
 
 To the fullest extent the law allows, our total liability to you for anything
 connected with the service is limited to the greater of **the amount you paid us
@@ -208,14 +236,14 @@ We are not liable for indirect or consequential losses, lost profits, or
 distress arising from your rating results — which, having read section 1, you
 knew were coming.
 
-## 14. You cover us for what you upload
+## 15. You cover us for what you upload
 
 If someone brings a claim against us because of something you uploaded or did on
 the service — for example, a photograph you had no right to use, or harassment
 of another user — you agree to cover our reasonable costs and damages arising
 from it.
 
-## 15. Changes to these terms
+## 16. Changes to these terms
 
 We may update these terms. If we make a material change we will raise the
 version number and ask you to accept the new version the next time you sign in.
@@ -224,7 +252,7 @@ don't want to, close your account instead.
 
 We keep a record of which version you accepted and when.
 
-## 16. Law and courts
+## 17. Law and courts
 
 These terms are governed by the laws of the Province of [PROVINCE] and the
 federal laws of Canada that apply there. You and we agree to the exclusive
@@ -234,21 +262,20 @@ injunctive relief anywhere.
 Nothing here removes any right you have to bring a complaint to a consumer
 protection authority or the Office of the Privacy Commissioner of Canada.
 
-## 17. Where the service is available
+## 18. Where the service is available
 
 TrueHumanNature is not offered to, and may not be used by, people in the
 **European Union, the United Kingdom, or the State of Illinois**. We block
 access from those regions. If you access the service by disguising your
 location, you are breaching these terms and we may terminate your account.
 
-## 18. Odds and ends
+## 19. Odds and ends
 
 - If a court finds part of these terms unenforceable, the rest still stands.
 - If we don't enforce something immediately, we haven't given up the right to.
 - You can't transfer your rights under these terms. We can transfer ours if the
   business is sold, and we will tell you if that happens.
-- These terms, plus the Privacy Policy (and the Leaderboard Terms if you accept
-  them), are the whole agreement between us.
+- These terms plus the Privacy Policy are the whole agreement between us.
 
 ---
 

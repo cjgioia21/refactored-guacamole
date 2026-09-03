@@ -5,6 +5,8 @@ const selectedMH = new Set();
 const $ = (s) => document.querySelector(s);
 const $$ = (s) => [...document.querySelectorAll(s)];
 let photoData = null; // uploaded photo as a downscaled data: URL
+let idData = null; // ID-next-to-face photo, only when a reviewer asked for one
+let onboardRole = null; // "voter" | "participant" — which path they picked
 let versusKeys = null; // set to a pick(side) fn while a comparison round is active
 document.addEventListener("keydown", (e) => {
   if (!versusKeys) return;
@@ -66,8 +68,10 @@ function show(view) {
   $("#view-" + view)?.classList.add("active");
   document.querySelectorAll("nav.tabs button").forEach((b) => b.classList.toggle("active", b.dataset.view === view));
   if (view === "home") loadHome();
+  // Without this the bottom-nav "Rate" tab shows an empty screen: the matchup
+  // was only ever loaded by the home face-cards, which call it directly.
+  if (view === "matchup") loadMatchup();
   if (view === "report") loadReport();
-  if (view === "matches") loadMatches();
   if (view === "buy") loadBuy();
   if (view === "admin") loadAdminQueue();
   if (view === "moral") loadMoralQuiz();
@@ -129,6 +133,24 @@ function initPhotoFlow() {
     } catch { alert("Couldn't read that image — try another."); }
   });
   $("#photo-url-toggle").addEventListener("click", () => { $("#photo-url").hidden = !$("#photo-url").hidden; });
+
+  // The ID photo, shown only when a reviewer has asked for one. Kept larger
+  // than a profile photo so the writing on the document stays readable.
+  $("#choose-id").addEventListener("click", () => $("#id-file").click());
+  $("#id-file").addEventListener("change", async (e) => {
+    const f = e.target.files[0];
+    if (!f) return;
+    try {
+      idData = await downscaleImage(f, 1400);
+      $("#id-preview").hidden = false;
+      $("#id-preview").innerHTML = `<img src="${idData}" alt="ID preview" />`;
+      $("#choose-id").textContent = "change ID photo";
+    } catch { alert("Couldn't read that image — try another."); }
+  });
+
+  // The voter / participant fork.
+  $("#role-fork").querySelectorAll("[data-role]").forEach((btn) =>
+    btn.addEventListener("click", () => setOnboardRole(btn.dataset.role)));
   $("#prediction").addEventListener("input", (e) => {
     const r = $("#pred-readout");
     r.textContent = `you predict ${e.target.value}%`;
@@ -155,11 +177,38 @@ async function boot() {
   $("#admin-tile").hidden = !me.isAdmin;
   renderPhotoStatus();
   renderMoralNag();
-  if (!me.profile) { showApp(); show("onboard"); prefillName(); }
-  else { showApp(); show("home"); }
+  if (!me.profile) {
+    showApp();
+    show("onboard");
+    prefillName();
+    $("#role-fork").hidden = false;
+    setOnboardRole("participant"); // pre-selected, but the choice is visible
+  } else {
+    showApp();
+    show("home");
+  }
 }
 function showLanding() { $("#app").hidden = true; $("#view-landing").classList.add("active"); }
 function showApp() { $("#view-landing").classList.remove("active"); $("#app").hidden = false; }
+// Voters get a profile and nothing else — no photo, no ID, no 18+ gate. They
+// still need an account, because a signed-in vote is what makes duplicate
+// accounts and vote-stuffing detectable.
+function setOnboardRole(role) {
+  onboardRole = role;
+  const participant = role === "participant";
+  $("#role-fork").querySelectorAll("[data-role]").forEach((b) =>
+    b.classList.toggle("sel", b.dataset.role === role));
+  // Everything below the fork is participant-only.
+  for (const sel of ["#photo-card", "#socials-card", "#confirms-card", "#pred-card", "#ratings-from-card", "#reqs-card"]) {
+    const el = document.querySelector(sel);
+    if (el) el.hidden = !participant;
+  }
+  $("#submit-face").textContent = participant ? "submit my face" : "start voting";
+  $("#submit-face").disabled = participant
+    ? ![...$$("#confirms [data-confirm]")].every((c) => c.checked)
+    : false;
+}
+
 function prefillName() {
   const f = $("#onboard-form");
   const email = me.account?.email || "";
@@ -252,11 +301,17 @@ $("#onboard-form").addEventListener("submit", async (e) => {
     shareName: !!f.shareName?.checked,
     age: f.age.value, gender, genderIdentity, orientation: f.orientation.value, ratingsFrom,
     prediction: predMoved ? f.prediction.value : null,
-    mentalHealth: [...selectedMH], socials: { instagram: f.instagram.value },
+    mentalHealth: [...selectedMH],
+    socials: { instagram: f.instagram.value, tiktok: f.tiktok?.value, twitter: f.twitter?.value },
     confirmedAdult: [...$("#confirms").querySelectorAll("[data-confirm]")].every((c) => c.checked),
   };
+  if (onboardRole === "voter" && !me.profile) {
+    // A voter's profile carries demographics only — no photo, nothing to review.
+    payload.photo = undefined;
+  }
   const photo = photoData || f.photo.value;
   if (photo) payload.photo = photo; // keep existing photo when editing without a new one
+  if (idData) payload.idDocument = idData;
   if (Object.keys(answers).length) payload.answers = answers;
   const { status, body } = await post("/api/profile", payload);
   if (status === 422 && body?.profile) {
@@ -269,10 +324,15 @@ $("#onboard-form").addEventListener("submit", async (e) => {
   }
   if (status >= 400) { alert(body?.error || "Couldn't submit — check your photo size."); return; }
   me.profile = body;
+  idData = null;
   setCredits(body.credits);
   renderPhotoStatus();
   show("home");
-  if (body.photoStatus === "pending") toast("⏳ Photo submitted — it goes live once a human approves it.");
+  if (body.hasPhoto && body.photoStatus === "pending") {
+    toast("⏳ Submitted — it goes live once a human approves it.");
+  } else if (!body.hasPhoto) {
+    toast("You're in. Start rating.");
+  }
 });
 
 // ================= Home =================
@@ -302,9 +362,17 @@ async function loadHome() {
     el.onclick = () => loadDilemma(el.dataset.dilemma);
   });
 
-  const matches = (await api("/api/matches")).body || [];
-  const badge = $("#match-badge");
-  badge.textContent = matches.length; badge.hidden = matches.length === 0;
+  // The home tile shows your live standing, so the leaderboard is a pull rather
+  // than something you have to go looking for.
+  const board = (await api("/api/leaderboard")).body;
+  const meta = $("#standing-meta");
+  if (meta) {
+    meta.textContent = !board?.isParticipant ? "voters aren't ranked →"
+      : !board.you ? "where you rank →"
+      : !board.you.ranked ? `${board.you.toGo} more matchups →`
+      : board.you.inTopTen ? `you're #${board.you.rank} →`
+      : `#${board.you.rank.toLocaleString()} · top ${board.you.percentile}% →`;
+  }
 
   const link = `${location.origin}/?ref=${me.account?.id?.slice(0, 8) || ""}`;
   $("#refer-link").value = link;
@@ -359,10 +427,10 @@ async function loadMatchup() {
   const { status, body } = await api(`/api/matchup${rateGender ? "?gender=" + rateGender : ""}`);
   if (status >= 400) { $("#matchup").innerHTML = ""; $("#matchup-empty").hidden = false; return; }
   $("#matchup-empty").hidden = true;
-  $("#matchup").innerHTML = [body.a, body.b].map((u, i) => `<button class="vs-card pick" type="button"
+  $("#matchup").innerHTML = [body.a, body.b].map((u, i) => withFlag(`<button class="vs-card pick" type="button"
       data-win="${u.id}" data-lose="${u.id === body.a.id ? body.b.id : body.a.id}">
       <span class="vs-photo">${avatar(u)}${u.age ? `<span class="vs-name">${u.age}</span>` : ""}</span>
-      <span class="pick-hint">click, or <b>${i === 0 ? "←" : "→"}</b></span></button>`).join("")
+      <span class="pick-hint">click, or <b>${i === 0 ? "←" : "→"}</b></span></button>`, u.id)).join("")
     + `<span class="vs-badge">VS</span>`;
   $("#matchup").querySelectorAll(".pick").forEach((btn) => btn.addEventListener("click", async () => {
     const before = me.profile.votesCast || 0;
@@ -457,26 +525,35 @@ async function loadReport() {
   // The unsoftened numbers. This goes first, before anything reassuring.
   const brutal = brutalCard(r);
 
-  // Human Nature score — the number that decides who you can match with.
+  // The four mirrors.
+  const mirrors = compatibilityCard(r) + selfVsCrowdCard(r) + reciprocityCard(r) + scatterCard(r);
+
+  // Human Nature score.
   const nature = natureCard(r);
 
   // Who Likes You?
   const fans = r.fans.unlocked ? fansCard(r.fans.report) : lockedFansCard(r.fans, r.credits);
 
-  // Your type + matches
+  // Your type + where you stand
+  const st = r.standing;
+  const standingTile = !st ? ""
+    : st.ranked
+      ? `<div class="card"><div class="stat"><b>#${st.rank.toLocaleString()}</b><span class="meta">of ${st.of.toLocaleString()} ranked · top ${st.percentile}%</span></div>
+           <button class="outline" style="width:100%;margin-top:8px" id="go-boards">open the Top 10 →</button></div>`
+      : `<div class="card"><div class="stat"><b>${st.toGo}</b><span class="meta">more matchups until you're ranked</span></div></div>`;
+
   const extra = `<div class="section-title">Your type <span class="hint">— learned from the photos you chose</span></div>
     <div class="card"><p style="margin:0;font-size:17px">${esc(r.yourType.text)}</p></div>
     <div class="cards">
-      <div class="card"><div class="stat"><b>${r.matches.length}</b><span class="meta">mutual matches</span></div><button class="outline" style="width:100%;margin-top:8px" id="go-matches">open matches →</button></div>
-      <div class="card"><div class="stat"><b>${r.crushes}</b><span class="meta">you rated highly, no match back</span></div></div>
+      ${standingTile}
+      <div class="card"><div class="stat"><b>${r.winRate == null ? "—" : r.winRate + "%"}</b><span class="meta">of your matchups end in a win</span></div></div>
     </div>
-    ${almostSection(r.almost || [])}
     <label class="email-pref" style="margin-top:14px"><input type="checkbox" id="email-pref" ${r.emailOnNewData ? "checked" : ""}/> email me when new data is available</label>`;
 
-  $("#report").innerHTML = trueNatureCard(r, p) + brutal + attract + nature + tasteSection(r.taste) + guesses + fans + extra;
+  $("#report").innerHTML = trueNatureCard(r, p) + brutal + attract + mirrors + nature + tasteSection(r.taste) + guesses + fans + extra;
 
   $("#tn-share")?.addEventListener("click", () => shareTrueNature(r));
-  $("#go-matches")?.addEventListener("click", () => show("matches"));
+  $("#go-boards")?.addEventListener("click", () => show("boards"));
   $("#go-moral")?.addEventListener("click", () => show("moral"));
   $("#buy-pairs")?.addEventListener("click", () => spendAction("/api/buy-pairs", {}, r.cost.pairs));
   $("#report").querySelectorAll("[data-reveal]").forEach((b) => b.addEventListener("click", () => spendAction("/api/reveal", { game: b.dataset.reveal }, r.cost.reveal)));
@@ -501,9 +578,9 @@ function brutalCard(r) {
   const win = r.winRate != null
     ? `<div class="brutal-stat"><b>${r.winRate}%</b><span>of your matchups end in a win</span>
          <small>${r.wins.toLocaleString()} won · ${r.losses.toLocaleString()} lost</small></div>` : "";
-  const passed = `<div class="brutal-stat"><b>${r.rejectedBy.toLocaleString()}</b>
-      <span>${r.rejectedBy === 1 ? "person has" : "people have"} seen you and picked someone else</span>
-      <small>${r.chosenBy.toLocaleString()} picked you</small></div>`;
+  const passed = `<div class="brutal-stat"><b>${r.abandonedBy.toLocaleString()}</b>
+      <span>${r.abandonedBy === 1 ? "person has" : "people have"} picked you before, then chosen someone else over you</span>
+      <small>${r.rejectedBy.toLocaleString()} passed on you at all · ${r.chosenBy.toLocaleString()} ever picked you</small></div>`;
 
   // The self-prediction, finally used for something.
   let pred = "";
@@ -533,6 +610,101 @@ const ordinal = (n) => {
   const s = ["th", "st", "nd", "rd"], v = n % 100;
   return n + (s[(v - 20) % 10] || s[v] || s[0]);
 };
+
+// ---- Compatibility Gap ----
+// Two bars: the average attractiveness percentile of who you pick, against the
+// average of who picks you. No advice, no softening — they line up or they don't.
+function compatibilityCard(r) {
+  const g = r.compatibilityGap;
+  if (!g || g.gap == null) {
+    return `<div class="card"><div class="section-title" style="margin-top:0">↔️ Compatibility Gap</div>
+      <p class="meta" style="margin:0">Not enough votes yet — you need to pick some people, and some people need to pick you.</p></div>`;
+  }
+  const bar = (label, pct, cls) => `<div class="gap-row">
+      <div class="gap-label"><span>${label}</span><b>${pct}</b></div>
+      <div class="gap-track"><i class="${cls}" style="width:${Math.max(2, pct)}%"></i></div>
+    </div>`;
+  return `<div class="card"><div class="section-title" style="margin-top:0">↔️ Compatibility Gap</div>
+    ${bar("Your Type", g.yourType, "type")}
+    ${bar("Your Fans", g.yourFans, "fans")}
+    <p class="gap-verdict">${esc(g.verdict)}</p>
+    <p class="meta">Average attractiveness percentile of the people you pick, against the people who pick you. A gap of ${Math.abs(g.gap)} points.</p>
+  </div>`;
+}
+
+// ---- Self-Report vs. Reality ----
+// Your answer on the left, the crowd's read on the right, every axis, no
+// commentary. The title does the work.
+function selfVsCrowdCard(r) {
+  const rows = (r.selfVsCrowd || []).map((a) => {
+    const crowd = a.crowd ? a.crowd.pct : null;
+    const delta = crowd == null ? null : Math.abs(a.self - crowd);
+    return `<div class="mirror-row">
+      <div class="mirror-head"><span>${a.emoji || ""} ${esc(a.label)}</span>${delta != null ? `<b class="${delta >= 30 ? "wide" : ""}">${delta} apart</b>` : `<span class="meta">no consensus yet</span>`}</div>
+      <div class="mirror-bars">
+        <div class="mirror-bar self"><span style="width:${a.self}%"></span><i>${a.self}</i></div>
+        <div class="mirror-bar crowd">${crowd == null ? `<em>—</em>` : `<span style="width:${crowd}%"></span><i>${crowd}</i>`}</div>
+      </div>
+      <div class="mirror-poles"><span>${esc(a.poles[0])}</span><span>${esc(a.poles[1])}</span></div>
+    </div>`;
+  }).join("");
+  return `<div class="card mirror-card">
+    <div class="section-title" style="margin-top:0">🪞 Who you think you are / Who you look like</div>
+    <div class="mirror-key"><span class="k self">you said</span><span class="k crowd">strangers guessed</span></div>
+    ${rows}
+  </div>`;
+}
+
+// ---- Reciprocity ----
+function reciprocityCard(r) {
+  const rec = r.reciprocity;
+  if (!rec || rec.rate == null || !rec.chosen) {
+    return `<div class="card"><div class="section-title" style="margin-top:0">🔁 Reciprocity</div>
+      <p class="meta" style="margin:0">Pick a few more people and this fills in.</p></div>`;
+  }
+  return `<div class="card"><div class="section-title" style="margin-top:0">🔁 Reciprocity</div>
+    <div class="recip"><b>${rec.rate}%</b>
+      <span>${rec.back} of the ${rec.chosen} people you chose also chose you</span></div>
+    ${rec.percentile != null ? `<p class="meta">That rate is higher than ${rec.percentile}% of everyone on the platform.</p>` : ""}
+    <p class="meta">Not a measure of how attractive you are — a measure of whether the people you want are the people who want you.</p>
+  </div>`;
+}
+
+// ---- Morality vs. Attractiveness ----
+// Inline SVG, no chart library. Every qualifying user is a dot; yours is the
+// one in a different colour. No trend line and no caption — draw your own.
+function scatterCard(r) {
+  const d = r.moralityVsLooks;
+  if (!d || d.points.length < 3) {
+    return `<div class="card"><div class="section-title" style="margin-top:0">📈 Morality vs. Attractiveness</div>
+      <p class="meta" style="margin:0">Needs a few more people with a finished quiz and ${d?.minMatchups ?? 50}+ matchups.</p></div>`;
+  }
+  const W = 320, H = 240, PAD = 34;
+  // x: nature score -72..72 → left..right. y: percentile 0..100 → bottom..top.
+  const px = (x) => PAD + ((x + 72) / 144) * (W - PAD - 8);
+  const py = (y) => H - PAD - (y / 100) * (H - PAD - 10);
+  const dots = d.points.map((p) =>
+    `<circle cx="${px(p.x).toFixed(1)}" cy="${py(p.y).toFixed(1)}" r="${p.you ? 6 : 3.5}" class="${p.you ? "dot you" : "dot"}" />`).join("");
+  return `<div class="card"><div class="section-title" style="margin-top:0">📈 Morality vs. Attractiveness</div>
+    <div class="scatter-wrap">
+      <svg viewBox="0 0 ${W} ${H}" class="scatter" role="img" aria-label="Morality score against attractiveness percentile, one dot per user">
+        <line x1="${PAD}" y1="${H - PAD}" x2="${W - 6}" y2="${H - PAD}" class="axis" />
+        <line x1="${PAD}" y1="8" x2="${PAD}" y2="${H - PAD}" class="axis" />
+        <line x1="${px(0)}" y1="8" x2="${px(0)}" y2="${H - PAD}" class="zero" />
+        ${dots}
+        <text x="${PAD}" y="${H - 10}" class="ax">better</text>
+        <text x="${W - 6}" y="${H - 10}" class="ax" text-anchor="end">worse</text>
+        <text x="0" y="14" class="ax">100th</text>
+        <text x="0" y="${H - PAD}" class="ax">0</text>
+      </svg>
+      <div class="scatter-legend">
+        <span>← morality score →</span>
+        <span class="you-key">your dot</span>
+      </div>
+    </div>
+    <p class="meta">${d.points.length} people with a finished morality quiz and at least ${d.minMatchups} matchups. Vertical axis is attractiveness percentile.</p>
+  </div>`;
+}
 
 // The Human Nature score: the verdict band, the six vices, and where you sit
 // against everyone else. This is the card built to be screenshotted.
@@ -566,21 +738,6 @@ function natureCard(r) {
 }
 
 // People you both like who haven't cleared the remaining gates yet.
-function almostSection(almost) {
-  if (!almost.length) return "";
-  const rows = almost.map((m) => {
-    const why = m.blockedBy === "nature"
-      ? `your Human Nature scores are ${m.natureGap} apart — too far to match`
-      : m.blockedBy === "your-quiz" ? "you haven't finished the morality quiz — they're waiting on you"
-      : m.blockedBy === "their-quiz" ? "they haven't taken the morality quiz yet"
-      : `pick them ${m.picksToGo} more time${m.picksToGo === 1 ? "" : "s"} to unlock it`;
-    return `<div class="card match-card">${avatar(m)}
-      <div class="meta">${why}</div></div>`;
-  }).join("");
-  return `<div class="section-title">So close <span class="hint">— you both picked each other, but a gate isn't cleared</span></div>
-    <div class="cards">${rows}</div>`;
-}
-
 function lockedFansCard(f, credits) {
   const pct = Math.min(100, Math.round((credits / f.cost) * 100));
   return `<div class="card locked-card">
@@ -766,69 +923,70 @@ async function settleOutstanding(outstanding) {
   return true;
 }
 
-// ================= The public boards =================
+// ================= The Top 10 =================
+// Ranked strictly by the share of matchups won. No opt-in, no opt-out, and
+// everybody sees their own standing whether or not they made it.
 async function loadBoards() {
   const wrap = $("#boards");
+  const standing = $("#board-standing");
   const { status, body } = await api("/api/leaderboard");
-  if (status === 503) { $("#board-status").innerHTML = ""; wrap.innerHTML = `<p class="empty">The boards are switched off.</p>`; return; }
+  if (status === 503) { standing.innerHTML = ""; wrap.innerHTML = `<p class="empty">The leaderboard is switched off.</p>`; return; }
   if (status !== 200) return;
 
-  $("#board-status").innerHTML = boardStatusCard(body.me, body);
-  $("#board-status").querySelector("#board-join")?.addEventListener("click", async () => {
-    // The agreement must be read and accepted in the same action as joining.
-    const agreed = await openLegal("board", { acceptable: true });
-    if (!agreed) return;
-    const r = await post("/api/board-optin", { on: true, agreementVersion: body.me.agreementVersion });
-    if (r.status !== 200) return toast(r.body?.error || "Couldn't join.");
-    toast("You're on the boards.");
-    loadBoards();
-  });
-  $("#board-status").querySelector("#board-leave")?.addEventListener("click", async () => {
-    await post("/api/board-optin", { on: false });
-    toast("Removed. You're off both boards.");
-    loadBoards();
-  });
+  standing.innerHTML = standingCard(body);
+  standing.querySelector("[data-view]")?.addEventListener("click", (e) => show(e.target.dataset.view));
 
-  if (!body.eligible) {
-    wrap.innerHTML = `<p class="empty">Nobody has opted in with enough ratings yet.</p>`;
-    return;
-  }
-  wrap.innerHTML = boardTable("👑 Highest rated", body.top, body.eligible)
-    + boardTable("💀 Lowest rated", body.bottom, body.eligible);
+  wrap.innerHTML = body.boards.length
+    ? body.boards.map(boardTable).join("")
+    : `<p class="empty">Nobody has been rated ${body.minMatchups} times yet. The board opens as soon as they have.</p>`;
 }
 
-function boardStatusCard(me, board) {
-  if (me.optedIn) {
-    const note = me.eligible
-      ? `You're on the boards. ${board.eligible} ${board.eligible === 1 ? "person is" : "people are"} ranked.`
-      : `You've opted in, but you need ${me.minMatchups} matchups to appear — you have ${me.matchups}.`;
-    return `<div class="card board-status in"><b>You're in.</b>
-      <div class="meta">${note}</div>
-      <button class="danger" id="board-leave" style="margin-top:10px">Remove me from the boards</button>
-      <div class="meta" style="margin-top:8px">Removal is instant. We can't remove screenshots other people already took.</div></div>`;
-  }
-  return `<div class="card board-status out">
-    <b>You are not on the boards.</b>
-    <div class="meta">Opting in puts your photo on a ranked list of everyone who joined — <b>including a list of the lowest-rated people on the site</b>. You don't get to choose which one you land on.</div>
-    <div class="meta">It's off by default, it changes nothing else about your account, and you can leave in one click.</div>
-    <button class="outline" id="board-join" style="margin-top:10px">Read the agreement and join</button>
-  </div>`;
-}
+const GENDER_TITLE = { woman: "Women", man: "Men", nonbinary: "Nonbinary" };
 
-function boardTable(title, rows, total) {
-  if (!rows.length) return "";
-  return `<div class="section-title">${title}</div>
-    <div class="board-list">${rows.map((r) => `
+function boardTable(board) {
+  return `<div class="section-title">🏆 ${GENDER_TITLE[board.gender] || board.gender} — Top ${board.rows.length}</div>
+    <div class="board-list">${board.rows.map((r) => `
       <div class="board-row${r.you ? " you" : ""}">
         <span class="board-rank">#${r.rank}</span>
         <span class="board-photo">${avatar(r)}</span>
         <span class="board-stats">
-          <b>${r.winRate == null ? "—" : r.winRate + "%"}</b>
-          <span class="meta">win rate · ${r.wins}W ${r.losses}L</span>
+          <b>${r.winRate}%</b>
+          <span class="meta">won · ${r.wins}W ${r.losses}L over ${r.matchups} pairs</span>
+          ${socialLinks(r.socials)}
           ${r.you ? `<span class="board-you">that's you</span>` : ""}
         </span>
       </div>`).join("")}</div>
-    <p class="meta" style="margin:6px 0 18px">of ${total} ranked</p>`;
+    <p class="meta" style="margin:6px 0 18px">of ${board.of} ranked ${GENDER_TITLE[board.gender]?.toLowerCase() || ""}</p>`;
+}
+
+// The card everyone outside the top ten sees — a real rank and a percentile.
+function standingCard(body) {
+  if (!body.isParticipant) {
+    return `<div class="card board-status out">
+      <b>You're a voter.</b>
+      <div class="meta">Only participants — people with a photo in the pool — are ranked. Add a photo and you'll get a rank of your own.</div>
+      <button class="outline" data-view="onboard" style="margin-top:10px">put my face in →</button>
+    </div>`;
+  }
+  const you = body.you;
+  if (!you) return "";
+  if (!you.ranked) {
+    return `<div class="card board-status out">
+      <b>Not ranked yet.</b>
+      <div class="meta">You need ${you.minMatchups} matchups to get a position — you're at ${you.matchups}. ${you.toGo} to go.</div>
+    </div>`;
+  }
+  if (you.inTopTen) {
+    return `<div class="card board-status in">
+      <b>You're #${you.rank}.</b>
+      <div class="meta">${you.winRate}% of your matchups end in a win — top ${you.percentile}% of ${you.of} ranked.</div>
+    </div>`;
+  }
+  return `<div class="card board-status">
+    <div class="standing-rank">You rank <b>#${you.rank.toLocaleString()}</b> of ${you.of.toLocaleString()}</div>
+    <div class="standing-line"><b>${you.winRate}%</b> win rate · <b>Top ${you.percentile}%</b></div>
+    <div class="meta">${you.wins.toLocaleString()} won, ${you.losses.toLocaleString()} lost across ${you.matchups.toLocaleString()} matchups.</div>
+  </div>`;
 }
 
 // ================= Dilemma rounds =================
@@ -878,7 +1036,7 @@ async function nextDilemma() {
   if (dilemmaKind === "cheat") {
     versusKeys = null;
     wrap.innerHTML = `<div class="cheat-round">
-        <div class="cheat-photo">${avatar(body.a)}</div>
+        <div class="cheat-photo">${avatar(body.a)}${reportFlag(body.a.id)}</div>
         <div class="cheat-actions">
           <button class="primary" data-cheat="yes">Yes</button>
           <button class="outline" data-cheat="no">No</button>
@@ -888,9 +1046,9 @@ async function nextDilemma() {
       el.addEventListener("click", () => answer({ aId: body.a.id, pick: el.dataset.cheat })));
   } else {
     wrap.innerHTML = `<div class="versus">
-        <button class="vs-card" type="button" data-pick="a"><span class="vs-photo">${avatar(body.a)}${body.a.age ? `<span class="vs-name">${body.a.age}</span>` : ""}</span><span class="pick-hint">save, or <b>←</b></span></button>
+        ${withFlag(`<button class="vs-card" type="button" data-pick="a"><span class="vs-photo">${avatar(body.a)}${body.a.age ? `<span class="vs-name">${body.a.age}</span>` : ""}</span><span class="pick-hint">save, or <b>←</b></span></button>`, body.a.id)}
         <div class="acc-badge death"><b>SAVE</b><span>ONE</span></div>
-        <button class="vs-card" type="button" data-pick="b"><span class="vs-photo">${avatar(body.b)}${body.b.age ? `<span class="vs-name">${body.b.age}</span>` : ""}</span><span class="pick-hint">save, or <b>→</b></span></button>
+        ${withFlag(`<button class="vs-card" type="button" data-pick="b"><span class="vs-photo">${avatar(body.b)}${body.b.age ? `<span class="vs-name">${body.b.age}</span>` : ""}</span><span class="pick-hint">save, or <b>→</b></span></button>`, body.b.id)}
       </div>` + dilemmaFoot();
     const choose = (pick) => answer({ aId: body.a.id, bId: body.b.id, pick });
     wrap.querySelectorAll("[data-pick]").forEach((el) => el.addEventListener("click", () => choose(el.dataset.pick)));
@@ -997,6 +1155,59 @@ function renderMoralNag() {
   if (meta) meta.textContent = done ? `${answered} / ${MORAL_META.total} answered →` : "required to match →";
 }
 
+// ================= Reporting =================
+// Available on every photo, and deliberately usable by anyone who can see one.
+let REPORT_REASONS = [];
+let reportTarget = null;
+
+async function openReport(targetId) {
+  reportTarget = targetId;
+  if (!REPORT_REASONS.length) REPORT_REASONS = (await api("/api/report-reasons")).body?.reasons || [];
+  let chosen = null;
+  $("#report-reasons").innerHTML = REPORT_REASONS.map((r) =>
+    `<span class="opt" data-reason="${r.key}">${esc(r.label)}${r.urgent ? `<b class="urgent">photo comes down straight away</b>` : ""}</span>`).join("");
+  $("#report-result").hidden = true;
+  $("#report-detail").value = "";
+  $("#report-send").disabled = true;
+  $("#report-modal").hidden = false;
+
+  $("#report-reasons").querySelectorAll("[data-reason]").forEach((el) => el.addEventListener("click", () => {
+    $("#report-reasons").querySelectorAll(".opt").forEach((o) => o.classList.remove("sel"));
+    el.classList.add("sel");
+    chosen = el.dataset.reason;
+    $("#report-send").disabled = false;
+  }));
+  $("#report-close").onclick = () => { $("#report-modal").hidden = true; };
+  $("#report-send").onclick = async () => {
+    if (!chosen) return;
+    $("#report-send").disabled = true;
+    const r = await post("/api/report", {
+      targetId: reportTarget, reason: chosen,
+      detail: $("#report-detail").value, contact: $("#report-contact").value,
+    });
+    const out = $("#report-result");
+    out.hidden = false;
+    out.className = "report-result " + (r.status === 201 ? "ok" : "no");
+    out.textContent = r.status === 201
+      ? (r.body.hidden
+          ? `Reported. The photo is hidden from everyone while we look at it. ${r.body.response}`
+          : `Reported. ${r.body.response}`)
+      : "Couldn't send that report.";
+    if (r.status === 201) setTimeout(() => { $("#report-modal").hidden = true; }, 3200);
+  };
+}
+document.addEventListener("click", (e) => {
+  const el = e.target.closest("[data-report]");
+  if (el) { e.preventDefault(); e.stopPropagation(); openReport(el.dataset.report); }
+});
+
+// A small flag on any photo card. Kept understated so it doesn't invite misuse,
+// but present everywhere a face is shown.
+const reportFlag = (id) => `<button class="report-flag" data-report="${id}" title="Report this photo" aria-label="Report this photo">⚑</button>`;
+// Wraps a photo card so the flag can sit over it as a sibling — a button
+// nested inside a button is invalid and gets pulled apart by the parser.
+const withFlag = (cardHtml, id) => `<span class="vs-slot">${cardHtml}${reportFlag(id)}</span>`;
+
 // ================= Photo moderation (owner-facing) =================
 const PHOTO_STATUS = {
   pending: { cls: "pending", icon: "⏳", title: "Photo pending review",
@@ -1024,9 +1235,107 @@ function renderPhotoStatus() {
     el.innerHTML = `<b>📸 No photo yet</b><div class="meta">Add one below — without a photo you can't be rated, and you can't match.</div>`;
     el.hidden = false;
   }
+  // A reviewer asked for ID: surface the upload card and say why.
+  if (p.idRequested) {
+    $("#id-card").hidden = false;
+    el.className = "photo-status pending";
+    el.innerHTML = `<b>🪪 Age check requested</b>
+      <div class="meta">A reviewer wasn't certain about your age, so your photo is on hold. Send a photo of yourself holding your ID next to your face using the card below — we delete it as soon as we've decided.</div>`;
+    el.hidden = false;
+    return;
+  }
+  $("#id-card").hidden = true;
+
+  // Voters have no photo and nothing pending — say so rather than nagging.
+  if (!p.hasPhoto) {
+    el.className = "photo-status";
+    el.innerHTML = `<b>You're a voter.</b>
+      <div class="meta">You can rate everyone and see your own report. Add a photo below if you want to be rated too — it goes to a human reviewer first, and you'll get a rank on the Top 10.</div>`;
+    el.hidden = false;
+    return;
+  }
+
+  if (p.verificationRequired && !p.verified) {
+    el.className = "photo-status pending";
+    el.innerHTML = `<b>🪪 Age verification needed</b>
+      <div class="meta">Your photo can't go live until we've confirmed you're 18 or over. We never see or keep your ID — our verification partner checks it and tells us pass or fail, nothing else.</div>
+      <button class="primary" id="start-verify" style="margin-top:10px">Verify my age</button>`;
+    el.hidden = false;
+    el.querySelector("#start-verify").onclick = async () => {
+      const r = await post("/api/verify/start", {});
+      if (r.status === 503) return toast(r.body?.error || "Verification isn't available yet.");
+      if (r.body?.url) location.href = r.body.url;
+    };
+    return;
+  }
   const meta = $("#photo-meta");
   if (meta) meta.textContent = { pending: "pending review →", rejected: "rejected — fix it →", approved: "manage →" }[p.photoStatus] || "manage →";
 }
+
+// ================= Admin: reports =================
+async function loadAdminReports() {
+  const wrap = $("#admin-reports");
+  // The labels live with the reasons; without this the queue shows raw keys
+  // ("minor") to the one person who most needs to read the sentence.
+  if (!REPORT_REASONS.length) REPORT_REASONS = (await api("/api/report-reasons")).body?.reasons || [];
+  const { status, body } = await api("/api/admin/reports");
+  if (status !== 200) return (wrap.innerHTML = `<p class="empty">Admin access required.</p>`);
+
+  const badge = $("#report-badge");
+  badge.textContent = body.open.length;
+  badge.hidden = body.open.length === 0;
+
+  // The number that says whether you're actually meeting the response windows
+  // the Terms commit to. If this goes red, the document is writing cheques the
+  // operation isn't cashing.
+  const age = body.oldestOpenHours;
+  const sla = age == null ? "" :
+    `<div class="card ${age > 24 ? "sla-late" : "sla-ok"}"><b>Oldest open report: ${age}h</b>
+      <div class="meta">${age > 24
+        ? "Past the 24-hour window the Terms promise for urgent reports."
+        : "Inside the published response windows."}</div></div>`;
+
+  wrap.innerHTML = sla + `<div class="section-title">Open reports (${body.open.length})</div>` +
+    (body.open.length ? body.open.map((r) => `
+      <div class="card review-card" data-report-id="${r.id}">
+        ${r.target ? avatar(r.target, "review-photo") : ""}
+        <div class="review-body">
+          <h3>${r.urgent ? "🚨 " : ""}${esc(REPORT_LABEL(r.reason))}</h3>
+          <div class="meta">${new Date(r.createdAt).toLocaleString()}${r.urgent ? " · photo already hidden" : ""}</div>
+          ${r.target ? `<div class="meta">${esc(r.target.name)}${r.target.age ? ", " + r.target.age : ""} · ${esc(r.target.photoStatus)}</div>` : `<div class="meta">profile deleted</div>`}
+          ${r.detail ? `<blockquote class="report-detail">${esc(r.detail)}</blockquote>` : ""}
+          ${r.contact ? `<div class="meta">reporter: ${esc(r.contact)}</div>` : ""}
+          <div class="review-actions">
+            <button class="danger" data-res="actioned">Actioned</button>
+            <button class="outline" data-res="dismissed">Dismiss</button>
+            ${r.target ? `<button class="outline" data-goto-photo="${r.target.id}">open photo review</button>` : ""}
+          </div>
+        </div>
+      </div>`).join("") : `<p class="empty">Nothing open. 🎉</p>`);
+
+  wrap.querySelectorAll("[data-res]").forEach((btn) => btn.addEventListener("click", async () => {
+    const id = btn.closest("[data-report-id]").dataset.reportId;
+    const resolution = prompt(btn.dataset.res === "actioned" ? "What did you do?" : "Why dismiss it?");
+    if (resolution === null) return;
+    await post(`/api/admin/reports/${id}`, { status: btn.dataset.res, resolution });
+    loadAdminReports();
+  }));
+  wrap.querySelectorAll("[data-goto-photo]").forEach((b) => b.addEventListener("click", () => showAdminTab("queue")));
+}
+const REPORT_LABEL = (key) => (REPORT_REASONS.find((r) => r.key === key)?.label) || key;
+
+function showAdminTab(tab) {
+  $("#admin-reports").hidden = tab !== "reports";
+  $("#admin-queue").hidden = tab !== "queue";
+  $("#admin-queue-title").hidden = tab !== "queue";
+  $("#admin-queue-sub").hidden = tab !== "queue";
+  document.querySelectorAll("[data-admin]").forEach((b) => b.classList.toggle("active", b.dataset.admin === tab));
+  if (tab === "reports") loadAdminReports(); else loadAdminQueue();
+}
+document.addEventListener("click", (e) => {
+  const el = e.target.closest("[data-admin]");
+  if (el) showAdminTab(el.dataset.admin);
+});
 
 // ================= Admin: photo approval queue =================
 async function loadAdminQueue() {
@@ -1039,6 +1348,12 @@ async function loadAdminQueue() {
       <h3>${esc(u.name)}${u.age ? ", " + u.age : " — no age given"}</h3>
       <div class="meta">${esc(u.genderIdentity || u.gender || "gender not given")} · submitted ${new Date(u.photoSubmittedAt).toLocaleString()}</div>
       ${(u.moderation.flags || []).length ? `<div class="flags">${u.moderation.flags.map((f) => `<span class="flag">${esc(f)}</span>`).join("")}</div>` : `<div class="meta">no automated flags</div>`}
+      <div class="meta">${u.verified ? `✅ age verified (${esc(u.verificationMethod || "?")})` : u.idRequested ? "🪪 ID requested — waiting on them" : "not age-checked"}</div>
+      ${u.hasId ? `<div class="id-review">
+          <b>ID submitted</b>
+          <img src="/api/admin/id/${u.id}" alt="submitted ID" />
+          <div class="meta">Deleted the moment you decide.</div>
+        </div>` : ""}
       ${u.moderation.reason ? `<div class="meta">reason: ${esc(u.moderation.reason)}</div>` : ""}
       ${decided
         ? `<div class="meta">${esc(u.photoStatus)}${u.accountLocked ? " · account locked" : ""} by ${esc(u.moderation.reviewedBy || "admin")}</div>`
@@ -1046,6 +1361,8 @@ async function loadAdminQueue() {
              <button class="primary" data-act="approve">Approve</button>
              <button class="outline" data-act="reject">Reject</button>
              <button class="danger" data-act="escalate">Escalate &amp; lock</button>
+             ${u.hasId || u.idRequested ? "" : `<button class="outline" data-act="request-id">Request ID</button>`}
+             <button class="outline" data-verify="${u.verified ? "off" : "on"}">${u.verified ? "Un-verify" : "Mark age verified"}</button>
            </div>`}
     </div></div>`;
   wrap.innerHTML = `
@@ -1057,30 +1374,36 @@ async function loadAdminQueue() {
     const id = btn.closest(".review-card").dataset.id;
     const action = btn.dataset.act;
     let reason = null;
-    if (action !== "approve") {
+    if (action === "reject" || action === "escalate") {
       reason = prompt(action === "escalate" ? "Why is this being escalated? (e.g. possible minor)" : "Why is this photo rejected?");
       if (reason === null) return;
     }
+    if (action === "request-id" && !confirm("Ask this person for a photo holding their ID? Their photo stays hidden until they send it.")) return;
     const r = await post(`/api/admin/photo/${id}`, { action, reason });
-    if (r.status !== 200) return toast("Couldn't save that decision.");
+    if (r.status !== 200) return toast(r.body?.error || "Couldn't save that decision.");
     toast(`${esc(action)}d`);
+    loadAdminQueue();
+  }));
+  wrap.querySelectorAll("[data-verify]").forEach((btn) => btn.addEventListener("click", async () => {
+    const id = btn.closest(".review-card").dataset.id;
+    await post(`/api/admin/verify/${id}`, { verified: btn.dataset.verify === "on" });
     loadAdminQueue();
   }));
 }
 
-async function loadMatches() {
-  const matches = (await api("/api/matches")).body || [];
-  $("#matches-list").innerHTML = matches.length
-    ? matches.map((m) => `<div class="card match-card">${avatar(m.user)}
-        <h3>${m.user.name ? esc(m.user.name) : "Anonymous"}${m.user.age ? ", " + m.user.age : ""}</h3>
-        <div class="meta">you picked them ${m.youPickRate}% · they picked you ${m.theyPickRate}%</div>
-        <div class="meta">${m.yourPicks}× / ${m.theirPicks}× picked · nature gap ${m.natureGap}</div>
-        ${socialLinks(m.user.socials)}</div>`).join("")
-    : `<p class="empty">No matches yet. A match takes four things: you both take the morality quiz, you pick each other over other people, at least ${META.match?.minPicks ?? 3} times each, and your Human Nature scores land within ${META.match?.natureWindow ?? 25} points.</p>`;
-}
+// Linked socials, shown on participant cards and the Top 10 — never in the
+// rating pool, where a handle under a face would change the vote.
+const SOCIAL_URL = {
+  instagram: (h) => `https://instagram.com/${h}`,
+  tiktok: (h) => `https://tiktok.com/@${h}`,
+  twitter: (h) => `https://x.com/${h}`,
+  snapchat: (h) => `https://snapchat.com/add/${h}`,
+};
 function socialLinks(s) {
-  const items = Object.entries(s || {}).map(([k, v]) => `<a class="pill" href="https://instagram.com/${esc(v)}" target="_blank" rel="noopener">${esc(k)}: @${esc(v)}</a>`);
-  return items.length ? `<div style="margin-top:8px">${items.join("")}</div>` : `<div class="meta" style="margin-top:8px">no socials shared</div>`;
+  const items = Object.entries(s || {})
+    .filter(([k, v]) => v && SOCIAL_URL[k])
+    .map(([k, v]) => `<a class="pill" href="${esc(SOCIAL_URL[k](encodeURIComponent(v)))}" target="_blank" rel="noopener noreferrer">${esc(k)}: @${esc(v)}</a>`);
+  return items.length ? `<span class="socials">${items.join("")}</span>` : "";
 }
 
 // ================= Guessing game play =================
@@ -1143,9 +1466,9 @@ async function playGame(gameKey) {
       const av = acc();
       wrap.innerHTML = `<p class="game-sub">For every ${cfg.need}/${cfg.rounds} correct, earn ${cfg.reward} credits.</p>
         <div class="versus">
-          <button class="vs-card" type="button" data-pick="a"><span class="vs-photo">${avatar(a)}${a.age ? `<span class="vs-name">${a.age}</span>` : ""}</span><span class="pick-hint">click, or <b>←</b></span></button>
+          ${withFlag(`<button class="vs-card" type="button" data-pick="a"><span class="vs-photo">${avatar(a)}${a.age ? `<span class="vs-name">${a.age}</span>` : ""}</span><span class="pick-hint">click, or <b>←</b></span></button>`, a.id)}
           <div class="acc-badge"><b>${av == null ? "—" : av + "%"}</b><span>ACCURACY</span><small>${base.total + sessionVotes} pairs</small></div>
-          <button class="vs-card" type="button" data-pick="b"><span class="vs-photo">${avatar(b)}${b.age ? `<span class="vs-name">${b.age}</span>` : ""}</span><span class="pick-hint">click, or <b>→</b></span></button>
+          ${withFlag(`<button class="vs-card" type="button" data-pick="b"><span class="vs-photo">${avatar(b)}${b.age ? `<span class="vs-name">${b.age}</span>` : ""}</span><span class="pick-hint">click, or <b>→</b></span></button>`, b.id)}
         </div>
         <div class="versus-foot">
           <span>${sessionVotes} this session · ${base.total + sessionVotes} all time</span>
