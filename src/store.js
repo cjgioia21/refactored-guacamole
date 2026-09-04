@@ -106,6 +106,8 @@ export function create(p = {}) {
     revealed: {}, // { gameKey: true } trait reveals you've purchased
     fansUnlocked: false, // "Who Likes You?" demographic report unlocked
     emailOnNewData: false,
+    lastDataEmailAt: null, // throttles the "new data" email — see dueForDataEmail
+    matchupsAtLastEmail: 0,
     priorityPairs: 0, // extra matchup priority purchased
     createdAt: new Date().toISOString(),
   };
@@ -388,6 +390,29 @@ export function setEmailPref(id, on) {
   if (user) { user.emailOnNewData = !!on; persist(); }
   return user;
 }
+// Should this person be told there's new data in their report? True at most
+// once a day, and only after enough new matchups that there's actually
+// something to look at — a notification that fires on every vote is spam, and
+// spam is how a sending domain gets blocked.
+const DATA_EMAIL_MIN_NEW = 25;
+const DATA_EMAIL_COOLDOWN_MS = 24 * 60 * 60 * 1000;
+export function dueForDataEmail(id) {
+  const user = get(id);
+  if (!user?.emailOnNewData) return false;
+  const since = (user.matchups || 0) - (user.matchupsAtLastEmail || 0);
+  if (since < DATA_EMAIL_MIN_NEW) return false;
+  const last = user.lastDataEmailAt ? Date.parse(user.lastDataEmailAt) : 0;
+  return Date.now() - last >= DATA_EMAIL_COOLDOWN_MS;
+}
+// Record that we sent one, so the next is a day and 25 matchups away.
+export function markDataEmailSent(id) {
+  const user = get(id);
+  if (!user) return;
+  user.lastDataEmailAt = new Date().toISOString();
+  user.matchupsAtLastEmail = user.matchups || 0;
+  persist();
+}
+
 export function guessStats(id) {
   const user = get(id);
   if (!user) return {};

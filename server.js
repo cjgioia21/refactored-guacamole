@@ -15,6 +15,10 @@ import * as legal from "./src/legal.js";
 import * as geo from "./src/geo.js";
 import * as identity from "./src/identity.js";
 import * as reports from "./src/reports.js";
+import * as mail from "./src/mail.js";
+import * as billing from "./src/billing.js";
+import * as purchases from "./src/purchases.js";
+import * as throttle from "./src/throttle.js";
 import {
   recordVote, report, guessOutcome, likes,
   GAMES, gameByKey, attractivenessBand, guessConsensus, fansReport, tasteReport, TASTES,
@@ -49,6 +53,25 @@ if (process.env.NODE_ENV === "production") app.set("trust proxy", 1);
 
 app.use(geo.geoGate); // regional restrictions — see src/geo.js for the honest limits
 app.get("/unavailable", (_req, res) => res.status(451).type("html").send(geo.unavailableHtml()));
+
+// Stripe signs the EXACT bytes it sent, so this one route needs the raw body
+// and has to be mounted ahead of the JSON parser. Everything else is JSON.
+app.post("/webhooks/stripe", express.raw({ type: "application/json" }), (req, res) => {
+  const v = billing.verifyWebhook(req.body, req.get("stripe-signature"));
+  // An unverified webhook is not a customer error to explain — it's either
+  // misconfiguration or someone trying to mint themselves credits.
+  if (!v.ok) return res.status(400).json({ error: "invalid signature" });
+
+  const grant = billing.creditGrant(v.event);
+  // Every other Stripe event type lands here. Answer 200 so they stop retrying.
+  if (!grant) return res.json({ ok: true, ignored: true });
+
+  // Stripe retries until it gets a 2xx, so the same paid session arrives more
+  // than once. Recording it first is what stops the second delivery paying out.
+  if (!purchases.record(grant)) return res.json({ ok: true, duplicate: true });
+  store.addCredits(grant.profileId, grant.credits);
+  res.json({ ok: true, credited: grant.credits });
+});
 
 app.use(express.json({ limit: "1mb" })); // room for small uploaded data: URLs
 
@@ -134,7 +157,10 @@ function requireAdmin(req, res, next) {
 }
 
 // ---------- Auth ----------
-app.post("/auth/signup", (req, res) => {
+app.post("/auth/signup", throttle.limit({
+  name: "signup", ...throttle.SIGNUP,
+  message: "too many accounts created from here — try again later",
+}), (req, res) => {
   const { email, password, state } = req.body || {};
   // Regional restrictions are checked at the door, not after the account exists.
   const country = req.geo?.country || (state ? "US" : null);
@@ -152,10 +178,19 @@ app.post("/auth/signup", (req, res) => {
   res.status(201).json({ account: auth.publicAccount(r.account) });
 });
 
-app.post("/auth/login", (req, res) => {
+// Keyed by email AND IP, so grinding one account from many addresses and many
+// accounts from one address both run into a wall.
+const loginKey = (req) => String(req.body?.email || "").trim().toLowerCase();
+app.post("/auth/login", throttle.limit({
+  name: "login", ...throttle.LOGIN, keyOf: loginKey,
+  message: "too many failed sign-in attempts — wait a few minutes",
+}), (req, res) => {
   const { email, password } = req.body || {};
   const r = auth.login(email, password);
   if (r.error) return res.status(401).json({ error: r.error });
+  // Only failures should count toward the limit — someone who mistypes twice
+  // and then gets it right has done nothing wrong.
+  throttle.clear(`login:${loginKey(req)}:${clientIp(req) || "?"}`);
   auth.issueSession(res, r.account.id);
   res.json({ account: auth.publicAccount(r.account) });
 });
@@ -163,6 +198,40 @@ app.post("/auth/login", (req, res) => {
 app.post("/auth/logout", (req, res) => {
   auth.endSession(res);
   res.json({ ok: true });
+});
+
+// ---- forgotten passwords ----
+// Without this, someone who forgets their password is locked out permanently
+// with their face still in the rating pool and no way back in to remove it.
+//
+// The response is IDENTICAL whether or not the address has an account. On a
+// site that publishes a leaderboard of faces, "does this person have an
+// account here" is itself a disclosure, and a forgot-password form is the
+// classic way to ask it a thousand times.
+app.post("/auth/forgot", throttle.limit({
+  name: "forgot", ...throttle.LOGIN,
+  message: "too many reset requests — wait a few minutes",
+}), async (req, res) => {
+  const account = auth.findByEmail(req.body?.email);
+  // A Google-only account has no password to reset; telling the requester that
+  // would leak how the account signs in, so it gets the same silence.
+  if (account && account.passwordHash) {
+    const { subject, text } = mail.resetEmail(auth.resetToken(account));
+    await mail.send({ to: account.email, subject, text });
+  }
+  res.json({ ok: true, message: "If that address has an account, a reset link is on its way." });
+});
+
+app.post("/auth/reset", (req, res) => {
+  const { token, password } = req.body || {};
+  const account = auth.accountForResetToken(token);
+  // One message for expired, forged, already-used and unknown alike.
+  if (!account) return res.status(400).json({ error: "that reset link is invalid or has expired" });
+  const r = auth.setPassword(account.id, password);
+  if (r.error) return res.status(400).json({ error: r.error });
+  // Signing them in here is the point — they came back to regain access.
+  auth.issueSession(res, account.id);
+  res.json({ account: auth.publicAccount(r.account) });
 });
 
 app.get("/auth/config", (req, res) => res.json({
@@ -324,6 +393,29 @@ app.post("/api/profile", async (req, res) => {
   res.status(201).json(store.ownerView(profile, account.id));
 });
 
+// Delete your account. legal/terms.md §11 promises this and the Privacy Policy
+// repeats it, so it has to work — including for someone who has refused a new
+// version of the terms (§16 tells them to close the account instead), which is
+// why this deliberately does NOT go through requireProfile.
+//
+// What goes: the login, the profile, the photo and any ID document (shredded
+// from disk by store.remove), and every rating that pointed at this person.
+// What stays: the votes THEY cast. Other people's Elo, win rates and rankings
+// are built from those, and retracting them would silently rewrite everyone
+// else's report — the numbers are aggregate and no longer identify anyone.
+app.delete("/api/account", (req, res) => {
+  const account = auth.currentAccount(req);
+  if (!account) return res.status(401).json({ error: "not authenticated" });
+  // A live session isn't enough for something irreversible.
+  if (!auth.checkPassword(account.id, req.body?.password)) {
+    return res.status(403).json({ error: "password does not match" });
+  }
+  if (account.profileId) store.remove(account.profileId);
+  auth.removeAccount(account.id);
+  auth.endSession(res);
+  res.json({ ok: true, deleted: true });
+});
+
 app.get("/api/users", (req, res) => res.json(store.visible().map((u) => store.publicView(u, viewerId(req)))));
 app.get("/api/users/:id", (req, res) => {
   const u = store.get(req.params.id);
@@ -351,6 +443,14 @@ app.post("/api/vote", requireProfile, (req, res) => {
     return res.status(400).json({ error: "invalid vote" });
   }
   recordVote(req.profile, winner, loser);
+  // Both sides just gained a matchup, so both may now have something new to
+  // read. Nothing is sent unless they asked for it (see store.dueForDataEmail).
+  for (const target of [winner, loser]) {
+    if (store.dueForDataEmail(target.id)) {
+      store.markDataEmailSent(target.id);
+      notifyOwner(target, mail.newDataEmail());
+    }
+  }
   let creditEarned = false;
   if (req.profile.votesCast % CREDIT_PER_VOTES === 0) {
     store.addCredits(req.profile.id, 1);
@@ -630,7 +730,10 @@ app.post("/api/verify/check", requireProfile, async (req, res) => {
 app.get("/api/report-reasons", (_req, res) =>
   res.json({ reasons: Object.entries(reports.REASONS).map(([key, r]) => ({ key, ...r })) }));
 
-app.post("/api/report", (req, res) => {
+app.post("/api/report", throttle.limit({
+  name: "report", ...throttle.REPORT,
+  message: "too many reports from here — if this is urgent, email us",
+}), (req, res) => {
   const { targetId, reason, detail, contact } = req.body || {};
   const target = store.get(targetId);
   if (!target || !reports.REASONS[reason]) return res.status(400).json({ error: "invalid report" });
@@ -638,7 +741,14 @@ app.post("/api/report", (req, res) => {
   const report = reports.file({ targetId, reason, detail, contact, reporterId: reporter?.id || null });
 
   // Urgent reasons hide the photo before a human looks at it.
-  if (report.urgent) store.suspendPhoto(targetId, `reported: ${reports.REASONS[reason].label}`);
+  if (report.urgent) {
+    store.suspendPhoto(targetId, `reported: ${reports.REASONS[reason].label}`);
+    // The photo is already down, which is the half that had to be instant. This
+    // is the half that makes the 24-hour commitment in the Terms real: without
+    // it, the clock only starts when you next happen to open the dashboard.
+    const { subject, text } = mail.urgentReportEmail(report, reports.REASONS[reason].label);
+    mail.alertAdmins({ subject, text }); // deliberately not awaited — see src/mail.js
+  }
   store.save();
   res.status(201).json({
     ok: true,
@@ -751,18 +861,47 @@ app.post("/api/admin/photo/:id", requireAdmin, (req, res) => {
       profile: store.adminView(updated, req.account.id),
     });
   }
+  // Tell them what happened. A rejection in particular is invisible otherwise —
+  // the photo is deleted and they'd be left refreshing a screen for an answer.
+  notifyOwner(updated, mail.photoDecisionEmail(updated.photoStatus === "approved", updated.moderation?.reason));
   res.json(store.adminView(updated, req.account.id));
 });
 
-app.get("/api/credit-packs", (_req, res) => res.json({ packs: CREDIT_PACKS }));
+// Email a profile's owner. Not awaited by callers: mail is a side effect of the
+// decision, never a reason for the request to fail.
+function notifyOwner(profile, { subject, text }) {
+  const account = profile?.accountId ? auth.accountById(profile.accountId) : null;
+  if (account?.email) mail.send({ to: account.email, subject, text });
+}
 
-// Purchase a pack. NOTE: demo checkout — no real payment processor is wired,
-// so this simply grants the credits. Swap in Stripe/etc. for real billing.
-app.post("/api/buy-credits", requireProfile, (req, res) => {
+app.get("/api/credit-packs", (_req, res) => res.json({
+  packs: CREDIT_PACKS,
+  // The buy screen needs to know whether it can actually sell anything.
+  purchasable: billing.configured(),
+}));
+
+// Start a purchase. This hands back a Stripe Checkout URL for the browser to
+// follow; the credits are granted later by the signed webhook above, never
+// here and never by the success redirect. See src/billing.js.
+app.post("/api/buy-credits", requireProfile, async (req, res) => {
   const pack = CREDIT_PACKS.find((p) => p.id === req.body?.packId);
   if (!pack) return res.status(400).json({ error: "unknown pack" });
-  store.addCredits(req.profile.id, pack.credits);
-  res.json({ ok: true, demo: true, added: pack.credits, credits: req.profile.credits });
+  if (!billing.configured()) {
+    return res.status(503).json({ error: "credits aren't on sale yet — payments are not switched on" });
+  }
+  const baseUrl = (process.env.PUBLIC_URL || `${req.protocol}://${req.get("host")}`).replace(/\/$/, "");
+  try {
+    const session = await billing.checkoutSession({
+      pack, baseUrl,
+      accountId: req.account.id,
+      profileId: req.profile.id,
+      email: req.account.email,
+    });
+    res.json({ ok: true, checkoutUrl: session.url });
+  } catch (err) {
+    console.warn(`[billing] checkout failed: ${err.message}`);
+    res.status(502).json({ error: "couldn't start checkout — try again in a minute" });
+  }
 });
 
 // Weighted pick: profiles with unspent purchased priority appear more often.

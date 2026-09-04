@@ -60,6 +60,48 @@ $("#auth-form").addEventListener("submit", async (e) => {
   await boot();
 });
 
+// ---- forgotten passwords ----
+// The response is the same whether or not the address is registered, so this
+// form can't be used to find out who has an account here.
+$("#forgot-link").addEventListener("click", async () => {
+  const email = $("#auth-form").email.value.trim();
+  const note = $("#auth-note");
+  $("#auth-err").hidden = true;
+  if (!email) {
+    $("#auth-err").textContent = "Type your email address first.";
+    $("#auth-err").hidden = false;
+    return;
+  }
+  const { body } = await post("/auth/forgot", { email });
+  note.textContent = body?.message || "If that address has an account, a reset link is on its way.";
+  note.hidden = false;
+});
+
+// Arriving from a reset link: /?reset=<token>. Swap the login form for the
+// new-password form and keep the token in memory, not in the page.
+let resetToken = null;
+(function pickUpResetLink() {
+  const token = new URLSearchParams(location.search).get("reset");
+  if (!token) return;
+  resetToken = token;
+  history.replaceState(null, "", location.pathname); // don't leave it in the URL bar or history
+  $("#auth-form").hidden = true;
+  $("#google-wrap").hidden = true;
+  document.querySelector(".tabs-auth").hidden = true;
+  $("#reset-form").hidden = false;
+})();
+
+$("#reset-form").addEventListener("submit", async (e) => {
+  e.preventDefault();
+  const { status, body } = await post("/auth/reset", { token: resetToken, password: e.target.password.value });
+  if (status >= 400) {
+    $("#reset-err").textContent = body?.error || "Something went wrong.";
+    $("#reset-err").hidden = false;
+    return;
+  }
+  await boot(); // /auth/reset signs them in — that's what they came back for
+});
+
 // ================= Navigation =================
 document.querySelectorAll("[data-view]").forEach((b) => b.addEventListener("click", () => show(b.dataset.view)));
 function show(view) {
@@ -159,6 +201,28 @@ function initPhotoFlow() {
   const confirms = $$("#confirms [data-confirm]");
   const gate = () => { $("#submit-face").disabled = !confirms.every((c) => c.checked); };
   confirms.forEach((c) => c.addEventListener("change", gate));
+
+  // Deleting your account. The Terms promise this, so it's always reachable
+  // from this screen — including for someone who only ever voted.
+  $("#delete-account").addEventListener("click", async () => {
+    const err = $("#delete-error");
+    err.hidden = true;
+    if (!confirm("Delete your account permanently?\n\nYour photo and any ID you sent are deleted from disk. This cannot be undone.")) return;
+    const btn = $("#delete-account");
+    btn.disabled = true;
+    const { status, body } = await api("/api/account", {
+      method: "DELETE",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ password: $("#delete-password").value }),
+    });
+    btn.disabled = false;
+    if (status !== 200) {
+      err.textContent = body?.error || "couldn't delete the account";
+      err.hidden = false;
+      return;
+    }
+    location.reload(); // the session is gone; come back to the landing page
+  });
 }
 
 async function boot() {
@@ -177,6 +241,13 @@ async function boot() {
   $("#admin-tile").hidden = !me.isAdmin;
   renderPhotoStatus();
   renderMoralNag();
+  // A way out is always available once you're signed in — §11 of the Terms.
+  $("#danger-zone").hidden = false;
+  settleReturnFromCheckout();
+  // A Google account has no password to confirm with; the session is the proof.
+  if (me.account?.google) {
+    $("#delete-password").closest("label").hidden = true;
+  }
   if (!me.profile) {
     showApp();
     show("onboard");
@@ -383,25 +454,43 @@ async function loadHome() {
 // ================= Buy credits =================
 async function loadBuy() {
   $("#balance").textContent = me.profile?.credits ?? 0;
-  const { packs } = (await api("/api/credit-packs")).body;
+  const { packs, purchasable } = (await api("/api/credit-packs")).body;
   $("#packs").innerHTML = packs.map((p) => `<div class="pack ${p.popular ? "popular" : ""}">
     ${p.popular ? `<div class="tag-popular">MOST POPULAR</div>` : ""}
     <div class="price">$${p.price}</div>
     <div class="amount">${p.credits.toLocaleString()} ✦${p.badge ? `<span class="save">${esc(p.badge)}</span>` : ""}</div>
     <div class="eq">Equivalent to ${esc(p.ratingsEq)}</div>
-    <button class="buy" data-pack="${p.id}">Buy</button>
+    <button class="buy" data-pack="${p.id}" ${purchasable ? "" : "disabled"}>${purchasable ? "Buy" : "not on sale yet"}</button>
   </div>`).join("");
+  // Say so plainly rather than letting someone click a button that can't work.
+  $("#buy-note").hidden = !!purchasable;
   $("#packs").querySelectorAll("[data-pack]").forEach((b) => b.addEventListener("click", async () => {
     b.disabled = true;
+    // Payment happens on Stripe's page; credits arrive by webhook when it
+    // clears, so there's nothing to add to the balance here.
     const { body } = await post("/api/buy-credits", { packId: b.dataset.pack });
-    if (body?.credits != null) {
-      setCredits(body.credits);
-      me.profile.credits = body.credits;
-      $("#balance").textContent = body.credits;
-      b.textContent = `+${body.added} ✦ added`;
-      setTimeout(() => { b.textContent = "Buy"; b.disabled = false; }, 1400);
-    } else b.disabled = false;
+    if (body?.checkoutUrl) { location.href = body.checkoutUrl; return; }
+    b.textContent = body?.error || "couldn't start checkout";
+    setTimeout(() => { b.textContent = "Buy"; b.disabled = false; }, 2200);
   }));
+}
+
+// Coming back from Stripe. The credits are granted by the webhook, which may
+// land a moment after the redirect, so this refreshes rather than assuming.
+async function settleReturnFromCheckout() {
+  const purchase = new URLSearchParams(location.search).get("purchase");
+  if (!purchase) return;
+  history.replaceState(null, "", location.pathname);
+  if (purchase !== "ok") return toast("Purchase cancelled — nothing was charged.");
+  toast("Thanks — your credits are on their way.");
+  // Give the webhook a moment, then take the balance from the server.
+  setTimeout(async () => {
+    const { body } = await api("/api/me");
+    if (body?.profile?.credits != null) {
+      me.profile = body.profile;
+      setCredits(body.profile.credits);
+    }
+  }, 2500);
 }
 
 // ================= Game grid (with accuracy) =================

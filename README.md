@@ -91,11 +91,18 @@ being about the face alone.
 
 ## Legal
 
-`legal/terms.md`, `legal/privacy.md` and `legal/board-terms.md` are served in
-the app and versioned; each account's acceptance is recorded with the version,
-timestamp and IP, and a version bump forces re-acceptance. **They are a thorough
-draft, not legal advice** — see [DEPLOY.md](DEPLOY.md) for what to fill in and
-what a lawyer needs to look at.
+`legal/terms.md` and `legal/privacy.md` are served in the app and versioned;
+each account's acceptance is recorded with the version, timestamp and IP, and a
+version bump forces re-acceptance. **They are a thorough draft, not legal
+advice** — see [DEPLOY.md](DEPLOY.md) for what to fill in and what a lawyer
+needs to look at.
+
+The Terms promise two things the code has to keep, so both are wired up:
+**account deletion** (`DELETE /api/account`, from the bottom of the profile
+screen — it shreds the photo and any ID from disk) and a **24-hour response to
+urgent reports** (the photo is hidden the instant one is filed, and the admins
+are emailed). The email half needs `MAIL_PROVIDER` set; until it is, every
+message is printed to the log and nothing is sent.
 
 The app blocks the **EU/UK and Illinois**, because of GDPR Article 9
 special-category data and Illinois BIPA respectively. DEPLOY.md documents how
@@ -233,10 +240,16 @@ gender, orientation, mental health) are structured fields collected separately.
 | POST   | `/api/buy-pairs`             | spend 75✦ for +200 prioritized matchups        |
 | POST   | `/api/unlock-fans`           | spend 300✦ to unlock the demographic report    |
 | POST   | `/api/email-pref`            | `{on}` — email me when new data arrives        |
-| GET    | `/api/credit-packs`          | purchasable credit packs                       |
-| POST   | `/api/buy-credits`           | `{packId}` — demo checkout, grants credits     |
+| GET    | `/api/credit-packs`          | credit packs, and whether they can be bought   |
+| POST   | `/api/buy-credits`           | `{packId}` — returns a Stripe Checkout URL     |
+| POST   | `/webhooks/stripe`           | signed by Stripe; the **only** thing that grants purchased credits |
+| POST   | `/auth/forgot`               | `{email}` — always answers the same, either way |
+| POST   | `/auth/reset`                | `{token, password}` — single-use, 30 minutes   |
+| DELETE | `/api/account`               | `{password}` — deletes the account and shreds the photo |
 
 Actions that mutate a user require a session; unauthenticated calls get 401.
+`/auth/login`, `/auth/signup` and `/api/report` are rate-limited (429), and a
+successful login clears its own counter.
 Profiles persist to `data/users.json`, accounts to `data/accounts.json`, and the
 session secret to `data/.secret` (all git-ignored).
 

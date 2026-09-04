@@ -5,7 +5,7 @@ import { rmSync } from "node:fs";
 process.env.NODE_ENV = "test";
 process.env.ADMIN_EMAILS = "admin@ex.com";
 const dataDir = new URL("../data/", import.meta.url);
-const files = ["accounts.json", ".secret", ".photokey", ".photosecret", "users.json", "moral-tally.json", "reports.json"].map((f) => new URL(f, dataDir));
+const files = ["accounts.json", ".secret", ".photokey", ".photosecret", "users.json", "moral-tally.json", "reports.json", "purchases.json"].map((f) => new URL(f, dataDir));
 const clean = () => {
   for (const f of files) { try { rmSync(f); } catch {} }
   try { rmSync(new URL("photos/", dataDir), { recursive: true }); } catch {}
@@ -141,17 +141,20 @@ test("profile stores photo, prediction, ratingsFrom and gender identity", async 
   assert.equal(me2.profile.name, "Pia B");
 });
 
-test("buying a credit pack grants credits", async () => {
+test("credits cannot be bought while payments are switched off", async () => {
   const a = client();
   await a("POST", "/auth/signup", { email: "buy@ex.com", password: "hunter2" });
   await a("POST", "/api/profile", { name: "Bea", gender: "woman", answers: {} });
-  const packs = (await a("GET", "/api/credit-packs")).body.packs;
-  assert.ok(packs.length >= 3);
+  const packs = (await a("GET", "/api/credit-packs")).body;
+  assert.ok(packs.packs.length >= 3);
+  assert.equal(packs.purchasable, false); // no STRIPE_SECRET_KEY in the test env
+
   const before = (await a("GET", "/api/report")).body.credits;
+  // The old demo checkout granted these for free. It must refuse instead.
   const buy = await a("POST", "/api/buy-credits", { packId: "popular" });
-  assert.equal(buy.status, 200);
-  assert.equal(buy.body.added, 300);
-  assert.equal(buy.body.credits, before + 300);
+  assert.equal(buy.status, 503);
+  assert.equal((await a("GET", "/api/report")).body.credits, before);
+  // An unknown pack is still a client error, checked before the 503.
   assert.equal((await a("POST", "/api/buy-credits", { packId: "nope" })).status, 400);
 });
 
@@ -775,4 +778,233 @@ test("a voter is not held to the photo confirmations they were never shown", asy
   const withPhoto = await c("POST", "/api/profile", { photo: await photoData(290), confirmedAdult: false });
   assert.equal(withPhoto.status, 422);
   assert.match(withPhoto.body.error, /18 or older/);
+});
+
+// ---- deleting an account (legal/terms.md §11) ----
+
+test("deleting an account shreds the photo but leaves other people's scores", async () => {
+  // Someone with a photo in the pool, plus a bystander whose numbers must survive.
+  const leaver = client();
+  await leaver("POST", "/auth/signup", { email: "leaver@ex.com", password: "hunter2" });
+  const lp = (await leaver("POST", "/api/profile", { name: "Leaver", gender: "woman", age: 24, photo: await photoData(120) })).body;
+
+  const stayer = client();
+  await stayer("POST", "/auth/signup", { email: "stayer@ex.com", password: "hunter2" });
+  const sp = (await stayer("POST", "/api/profile", { name: "Stayer", gender: "woman", age: 25, photo: await photoData(160) })).body;
+  await approve(lp.id, sp.id);
+
+  // A third face, so the leaver can vote on a pair that doesn't include itself.
+  const third = client();
+  await third("POST", "/auth/signup", { email: "third@ex.com", password: "hunter2" });
+  const tp = (await third("POST", "/api/profile", { name: "Third", gender: "woman", age: 26, photo: await photoData(200) })).body;
+  await approve(tp.id);
+
+  // The leaver votes for the stayer — that vote is part of the stayer's score.
+  assert.equal((await leaver("POST", "/api/vote", { winnerId: sp.id, loserId: tp.id })).status, 200);
+  const before = (await stayer("GET", "/api/report")).body;
+  assert.equal(before.wins, 1);
+
+  // A live session is not enough on its own.
+  const wrong = await leaver("DELETE", "/api/account", { password: "not-my-password" });
+  assert.equal(wrong.status, 403);
+
+  const gone = await leaver("DELETE", "/api/account", { password: "hunter2" });
+  assert.equal(gone.status, 200);
+
+  // The session is dead and the profile is unreachable.
+  assert.equal((await leaver("GET", "/api/me")).status, 401);
+  assert.equal((await client()("GET", `/api/users/${lp.id}`)).status, 404);
+  // The photo blob is shredded, not merely hidden.
+  const { get } = await import("../src/photos.js");
+  assert.equal(get(lp.photoId ?? "none"), null);
+
+  // The stayer's win still stands, and nothing points at the deleted account.
+  const after = (await stayer("GET", "/api/report")).body;
+  assert.equal(after.wins, before.wins);
+  assert.equal((await stayer("GET", "/api/leaderboard")).status, 200);
+});
+
+test("an account that never onboarded can still delete itself", async () => {
+  const c = client();
+  await c("POST", "/auth/signup", { email: "abandoned@ex.com", password: "hunter2" });
+  const r = await c("DELETE", "/api/account", { password: "hunter2" });
+  assert.equal(r.status, 200);
+  // The email is free again — the account is really gone, not just detached.
+  const again = await client()("POST", "/auth/signup", { email: "abandoned@ex.com", password: "hunter2" });
+  assert.equal(again.status, 201);
+});
+
+test("deleting an account needs a session", async () => {
+  assert.equal((await client()("DELETE", "/api/account", { password: "hunter2" })).status, 401);
+});
+
+// ---- forgotten passwords ----
+
+test("a reset token logs you in, works once, and expires with the old password", async () => {
+  const c = client();
+  await c("POST", "/auth/signup", { email: "forgetful@ex.com", password: "hunter2" });
+
+  // The endpoint answers identically whether or not the address is registered —
+  // otherwise it's a way to ask "does this person have an account here".
+  const known = await c("POST", "/auth/forgot", { email: "forgetful@ex.com" });
+  const unknown = await c("POST", "/auth/forgot", { email: "nobody-at-all@ex.com" });
+  assert.equal(known.status, 200);
+  assert.deepEqual(known.body, unknown.body);
+
+  const { findByEmail, resetToken } = await import("../src/auth.js");
+  const token = resetToken(findByEmail("forgetful@ex.com"));
+
+  // A forged token is refused, and the message gives nothing away.
+  const forged = await client()("POST", "/auth/reset", { token: token.slice(0, -4) + "aaaa", password: "newpass1" });
+  assert.equal(forged.status, 400);
+  assert.match(forged.body.error, /invalid or has expired/);
+
+  // The real one works and signs them straight in.
+  const fresh = client();
+  const ok = await fresh("POST", "/auth/reset", { token, password: "newpass1" });
+  assert.equal(ok.status, 200);
+  assert.equal((await fresh("GET", "/api/me")).status, 200);
+
+  // Single use: the same token is dead now that the password has changed.
+  const replay = await client()("POST", "/auth/reset", { token, password: "different1" });
+  assert.equal(replay.status, 400);
+
+  // And the new password is the one that works.
+  assert.equal((await client()("POST", "/auth/login", { email: "forgetful@ex.com", password: "hunter2" })).status, 401);
+  assert.equal((await client()("POST", "/auth/login", { email: "forgetful@ex.com", password: "newpass1" })).status, 200);
+});
+
+test("a reset token dies with the account it belongs to", async () => {
+  const c = client();
+  await c("POST", "/auth/signup", { email: "brief@ex.com", password: "hunter2" });
+  const { findByEmail, resetToken } = await import("../src/auth.js");
+  const token = resetToken(findByEmail("brief@ex.com"));
+  await c("DELETE", "/api/account", { password: "hunter2" });
+  const r = await client()("POST", "/auth/reset", { token, password: "newpass1" });
+  assert.equal(r.status, 400);
+});
+
+test("mail ships dormant: nothing is sent and no call throws", async () => {
+  const mail = await import("../src/mail.js");
+  assert.equal(mail.configured(), false);
+  const r = await mail.send({ to: "someone@ex.com", subject: "hi", text: "there" });
+  assert.equal(r.sent, false);
+  assert.match(r.reason, /no provider/);
+  // A missing recipient is a no-op, not an exception in a request path.
+  assert.equal((await mail.send({ subject: "x" })).sent, false);
+});
+
+// ---- payments ----
+// The webhook is the only thing that may grant credits, so these test it as the
+// money path it is: a forged signature, a stale one, and a replay.
+
+test("only a correctly signed webhook grants credits, and only once", async () => {
+  const { createHmac } = await import("node:crypto");
+  const secret = "whsec_test_secret";
+  process.env.STRIPE_WEBHOOK_SECRET = secret;
+  const purchases = await import("../src/purchases.js");
+  purchases._reset();
+
+  const buyer = client();
+  await buyer("POST", "/auth/signup", { email: "webhook@ex.com", password: "hunter2" });
+  const p = (await buyer("POST", "/api/profile", { name: "Wes", gender: "man" })).body;
+  const before = (await buyer("GET", "/api/report")).body.credits;
+
+  const event = (sessionId) => JSON.stringify({
+    type: "checkout.session.completed",
+    data: { object: { id: sessionId, payment_status: "paid", client_reference_id: p.id, metadata: { profileId: p.id, credits: "300", packId: "popular" } } },
+  });
+  const post = async (body, sig) => {
+    const res = await fetch(base + "/webhooks/stripe", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "stripe-signature": sig },
+      body,
+    });
+    return { status: res.status, body: await res.json().catch(() => null) };
+  };
+  const sign = (body, t = Math.floor(Date.now() / 1000)) =>
+    `t=${t},v1=${createHmac("sha256", secret).update(`${t}.${body}`).digest("hex")}`;
+
+  const body = event("cs_test_1");
+
+  // Forged: right shape, wrong secret.
+  const forged = `t=${Math.floor(Date.now() / 1000)},v1=${createHmac("sha256", "not-the-secret").update("x").digest("hex")}`;
+  assert.equal((await post(body, forged)).status, 400);
+  // Stale: a valid signature from an hour ago is still refused.
+  assert.equal((await post(body, sign(body, Math.floor(Date.now() / 1000) - 3600))).status, 400);
+  assert.equal((await buyer("GET", "/api/report")).body.credits, before);
+
+  // The real thing pays out.
+  const ok = await post(body, sign(body));
+  assert.equal(ok.status, 200);
+  assert.equal(ok.body.credited, 300);
+  assert.equal((await buyer("GET", "/api/report")).body.credits, before + 300);
+
+  // Stripe retries until it gets a 2xx — the retry must not pay twice.
+  const replay = await post(body, sign(body));
+  assert.equal(replay.status, 200);
+  assert.equal(replay.body.duplicate, true);
+  assert.equal((await buyer("GET", "/api/report")).body.credits, before + 300);
+
+  // An unpaid session and an unrelated event type are both ignored.
+  const unpaid = JSON.stringify({ type: "checkout.session.completed", data: { object: { id: "cs_test_2", payment_status: "unpaid", metadata: { profileId: p.id, credits: "300" } } } });
+  assert.equal((await post(unpaid, sign(unpaid))).body.ignored, true);
+  const other = JSON.stringify({ type: "invoice.paid", data: { object: {} } });
+  assert.equal((await post(other, sign(other))).body.ignored, true);
+  assert.equal((await buyer("GET", "/api/report")).body.credits, before + 300);
+
+  delete process.env.STRIPE_WEBHOOK_SECRET;
+});
+
+// ---- throttling ----
+
+test("failed logins are throttled, and a success clears the counter", async () => {
+  const throttle = await import("../src/throttle.js");
+  process.env.THROTTLE_IN_TEST = "1";
+  throttle._reset();
+  try {
+    const c = client();
+    await c("POST", "/auth/signup", { email: "grind@ex.com", password: "hunter2" });
+
+    // Nine wrong guesses are refused as wrong, not as too many.
+    for (let i = 0; i < 9; i++) {
+      assert.equal((await client()("POST", "/auth/login", { email: "grind@ex.com", password: `wrong${i}` })).status, 401);
+    }
+    // Getting it right inside the window works AND resets the count.
+    assert.equal((await client()("POST", "/auth/login", { email: "grind@ex.com", password: "hunter2" })).status, 200);
+    for (let i = 0; i < 9; i++) {
+      assert.equal((await client()("POST", "/auth/login", { email: "grind@ex.com", password: `wrong${i}` })).status, 401);
+    }
+
+    // Past the limit it stops answering the question at all.
+    let blocked = null;
+    for (let i = 0; i < 4 && !blocked; i++) {
+      const r = await client()("POST", "/auth/login", { email: "grind@ex.com", password: "still-wrong" });
+      if (r.status === 429) blocked = r;
+    }
+    assert.ok(blocked, "expected a 429 once the failures passed the limit");
+    assert.match(blocked.body.error, /too many failed sign-in/);
+
+    // A different account is unaffected — the limit is per email, not global.
+    const other = client();
+    assert.equal((await other("POST", "/auth/signup", { email: "bystander@ex.com", password: "hunter2" })).status, 201);
+  } finally {
+    delete process.env.THROTTLE_IN_TEST;
+    throttle._reset();
+  }
+});
+
+test("the limiter counts within a window and reports a retry time", async () => {
+  const { hit, retryAfter, _reset } = await import("../src/throttle.js");
+  _reset();
+  assert.equal(hit("k", 2, 60_000), true);
+  assert.equal(hit("k", 2, 60_000), true);
+  assert.equal(hit("k", 2, 60_000), false);
+  assert.ok(retryAfter("k") > 0 && retryAfter("k") <= 60);
+  // A separate key has its own budget.
+  assert.equal(hit("other", 2, 60_000), true);
+  // A window that has already elapsed starts clean.
+  assert.equal(hit("expired", 1, -1), true);
+  assert.equal(hit("expired", 1, -1), true);
+  _reset();
 });

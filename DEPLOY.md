@@ -29,6 +29,12 @@ won't work). Any of the paths below works.
   | `BOARDS_ENABLED` | optional | set to `0` to switch the Top 10 off entirely. |
   | `ID_PROVIDER` | optional | `manual` enables the request-ID escalation in the review queue (recommended). `none` disables ID collection altogether. |
   | `REQUIRE_ID_VERIFICATION` | optional | `1` demands ID from **everyone** before their photo goes live. Off by default — the escalation model asks only the people a reviewer is unsure about, which is both cheaper and far less data to hold. |
+  | `PUBLIC_URL` | **before launch** | your site's absolute base URL, e.g. `https://truehumannature.com`. Password-reset emails and Stripe's return URLs are built from it; unset, a reset email carries a bare code instead of a working link. |
+  | `MAIL_PROVIDER` | **before launch** | `none` (default) prints every email to the log and sends nothing. `resend` sends for real. Until this is set, nobody can recover a forgotten password and you are not told about urgent reports. |
+  | `RESEND_API_KEY` / `MAIL_FROM` | with `MAIL_PROVIDER=resend` | your Resend key, and the From address on a domain you have verified with them. An unverified domain lands in spam. |
+  | `STRIPE_SECRET_KEY` | to sell credits | live or test secret key. **Unset, credits cannot be bought at all** and the buy screen says so — which is the correct state until Stripe confirms in writing that this business is acceptable to them. |
+  | `STRIPE_WEBHOOK_SECRET` | with Stripe | the `whsec_…` for your `/webhooks/stripe` endpoint. Credits are granted **only** by this webhook, so without it a payment takes money and delivers nothing. Set both or neither. |
+  | `STRIPE_CURRENCY` | optional | defaults to `cad`. |
   | `GOOGLE_CLIENT_ID` / `GOOGLE_CLIENT_SECRET` / `OAUTH_REDIRECT` | optional | enables the "Sign in with Google" button; email/password works without them |
 
 > Persistence note: JSON files are fine for launch/small scale. Photos are
@@ -39,8 +45,8 @@ won't work). Any of the paths below works.
 
 ## Before you launch: the legal setup
 
-Three documents live in `legal/` and are served at `/api/legal/:doc`
-(`terms`, `privacy`, `board`). They are a **thorough draft, not legal advice.**
+Two documents live in `legal/` and are served at `/api/legal/:doc`
+(`terms`, `privacy`). They are a **thorough draft, not legal advice.**
 Have a lawyer read them before you take a single payment or a single photo.
 
 1. **Fill in the placeholders** with `LEGAL_ENTITY`, `LEGAL_PROVINCE`,
@@ -55,9 +61,20 @@ Have a lawyer read them before you take a single payment or a single photo.
    `ID_PROVIDER=manual` too, so the **Request ID** button is available when a
    face looks too young to approve on sight.
 4. **Confirm your payment processor will take this business, in writing, before
-   you build billing on it.** Stripe and PayPal both prohibit certain sexual
+   you switch billing on.** Stripe and PayPal both prohibit certain sexual
    content, and being cut off after launch with customer balances outstanding is
-   a far worse problem than being told no in advance.
+   a far worse problem than being told no in advance. Until you have that
+   confirmation, leave `STRIPE_SECRET_KEY` unset: credits then cannot be bought
+   at all, which is the safe default and what the buy screen will tell people.
+5. **Set `MAIL_PROVIDER` and `PUBLIC_URL`.** With mail off, a user who forgets
+   their password is locked out permanently with their face still in the rating
+   pool, and the 24-hour takedown commitment in §12 of the Terms depends on you
+   noticing the report in the dashboard by yourself. The photo is hidden
+   automatically either way — but nothing tells you it happened.
+6. **Account deletion works out of the box** (`DELETE /api/account`, from the
+   bottom of the profile screen). It shreds the photo and any ID from disk. The
+   votes the person cast on other people stay, de-identified, because other
+   people's scores are built from them; the Privacy Policy says so.
 
 ### Regional blocking
 `src/geo.js` blocks the EU/EEA, the UK, and Illinois, because this site collects

@@ -216,6 +216,75 @@ export function recordAgreement(accountId, key, record) {
   return a;
 }
 
+// --- password reset ---
+//
+// The token is an HMAC over (accountId, issuedAt, a fingerprint of the CURRENT
+// password hash). Binding it to the existing hash is what makes it single-use
+// without storing anything: the moment the password changes the fingerprint
+// changes, and every token minted against the old one stops verifying. The same
+// falls out for free if the account is deleted.
+const RESET_TTL_MS = 30 * 60 * 1000;
+const pwFingerprint = (a) =>
+  createHmac("sha256", SECRET).update(String(a.passwordHash || "none")).digest("base64url").slice(0, 16);
+
+export function resetToken(account) {
+  const payload = `${account.id}|${Date.now()}|${pwFingerprint(account)}`;
+  return Buffer.from(sign(payload)).toString("base64url");
+}
+
+// Returns the account the token is for, or null. Never says *why* it failed —
+// callers surface one message for every failure mode.
+export function accountForResetToken(token) {
+  let signed;
+  try {
+    signed = Buffer.from(String(token || ""), "base64url").toString("utf8");
+  } catch {
+    return null;
+  }
+  const value = unsign(signed);
+  if (!value) return null;
+  const [accountId, issuedAt, fingerprint] = value.split("|");
+  if (!accountId || !issuedAt) return null;
+  if (Date.now() - Number(issuedAt) > RESET_TTL_MS) return null;
+  const account = accountById(accountId);
+  // A password change (or a deleted account) invalidates the token here.
+  if (!account || fingerprint !== pwFingerprint(account)) return null;
+  return account;
+}
+
+export function setPassword(accountId, password) {
+  if (String(password || "").length < 6) return { error: "password too short (min 6)" };
+  const a = accountById(accountId);
+  if (!a) return { error: "no such account" };
+  a.passwordHash = hashPassword(password);
+  persist();
+  return { account: a };
+}
+
+// Look up by email without leaking whether it exists — the caller decides what
+// to say. Exported only for the reset flow.
+export const findByEmail = (email) => byEmail(String(email || "").trim().toLowerCase());
+
+// Check a password against an existing account. Used to confirm irreversible
+// actions — deleting the account — where a live session alone isn't enough.
+export function checkPassword(accountId, password) {
+  const a = accountById(accountId);
+  if (!a) return false;
+  // A Google-only account has no password to check; the session is all there is.
+  if (!a.passwordHash) return true;
+  return verifyPassword(String(password || ""), a.passwordHash);
+}
+
+// Delete an account outright. The profile is removed separately by the caller
+// (store.remove shreds the photo and the ID document); this drops the login.
+export function removeAccount(accountId) {
+  const before = accounts.length;
+  accounts = accounts.filter((a) => a.id !== accountId);
+  if (accounts.length === before) return false;
+  persist();
+  return true;
+}
+
 // Where the account signed up from, used to enforce the regional restrictions.
 export function setRegion(accountId, region) {
   const a = accountById(accountId);

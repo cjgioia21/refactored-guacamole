@@ -29,7 +29,15 @@
           I am 18 or older and I agree to the <a class="link" data-legal="terms">Terms</a> and <a class="link" data-legal="privacy">Privacy Policy</a>.
         </label>
         <p class="auth-err" id="auth-err" hidden></p>
+        <p class="auth-note" id="auth-note" hidden></p>
         <button type="submit" class="primary" id="auth-submit">Log in</button>
+        <button type="button" class="link-btn" id="forgot-link">forgot your password?</button>
+      </form>
+      <form id="reset-form" hidden>
+        <h3>Choose a new password</h3>
+        <label>New password <input name="password" type="password" required minlength="6" autocomplete="new-password" /></label>
+        <p class="auth-err" id="reset-err" hidden></p>
+        <button type="submit" class="primary">set my new password</button>
       </form>
     </div>
   </section>
@@ -167,6 +175,19 @@
 
           <button type="submit" class="primary" id="submit-face" disabled>submit my face</button>
         </form>
+
+        <div class="card danger-zone" id="danger-zone" hidden>
+          <h3>Delete your account</h3>
+          <p class="sub" style="margin:0 0 10px">This cannot be undone. Your photo and any ID you sent are
+            <b>deleted from disk</b>, not just hidden, and your account is gone.</p>
+          <p class="sub" style="margin:0 0 12px">The votes you cast on other people stay. They're part of other
+            people's scores and they no longer point at you.</p>
+          <label>Confirm with your password
+            <input type="password" id="delete-password" autocomplete="current-password" placeholder="your password" />
+          </label>
+          <button type="button" class="danger" id="delete-account">delete my account permanently</button>
+          <div id="delete-error" class="report-result no" hidden></div>
+        </div>
       </section>
 
       <!-- Home -->
@@ -229,7 +250,8 @@
         <div class="card"><h2 style="font-size:20px;margin:0 0 4px">Your balance</h2><div class="balance"><span id="balance">0</span> ✦</div></div>
         <div class="section-title">One-time</div>
         <div id="packs"></div>
-        <p class="privacy-note">Demo checkout — no real payment is taken; the credits are granted instantly. Wire a payment processor for live billing.</p>
+        <p class="privacy-note" id="buy-note" hidden>Credits aren't on sale yet — payments haven't been switched on. Everything on this site can still be earned by rating and playing rounds.</p>
+        <p class="privacy-note">Payment is handled by Stripe on their own page. Your card details never reach this site.</p>
       </section>
 
       <!-- Public boards -->
